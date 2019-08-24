@@ -1,0 +1,322 @@
+---
+title: "Differential DNA methylation analysis using WGBS data"
+author: "Pubudu Nawarathna"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+#create methylkit input files from bismark csv output files
+##you can directly get methylkit files from bismark
+###GRCh 38
+
+
+```{r}
+#module load gcc/5.4.0 r/3.4.3
+
+library(dplyr)
+library(data.table)
+library(stringi)
+library(GenomicRanges)
+library(rtracklayer)
+
+setwd("../../files")
+
+converttoMethylkit <- function(file=NULL, file.name=NULL){
+
+
+a <- fread(file)
+
+colnames(a)[1] <- "chr"
+
+df<- makeGRangesFromDataFrame(a, keep.extra.columns=TRUE)
+
+
+     tx_hg19 <- df %>% as.data.frame()
+
+        tx_hg19$chrBase <- paste(tx_hg19$seqnames,tx_hg19$start, sep=".")
+
+         tx_hg19$freqT <- 100-tx_hg19$total_meth
+
+         tx_hg19 <- select(tx_hg19, c("chrBase", "seqnames", "start", "strand", "total", "total_meth", "freqT"))
+                tx_hg19 <- tx_hg19 %>% unique
+                
+
+         colnames(tx_hg19) <- c("chrBase", "chr", "base", "strand", "coverage", "freqC", "freqT")
+         write.table(tx_hg19, file=file.name, sep="\t", col.names=T, row.names=F, quote=F)
+
+         }
+
+
+converttoMethylkit(file="methykit.input/R354_N_1_Kidney_BS_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R354_N_1_Kidney_BS_1.grc38.txt")
+
+converttoMethylkit("methykit.input/R354_N_1_Kidney_BS2_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R354_N_2_Kidney_BS_1.grc38.txt")
+
+converttoMethylkit("methykit.input/R354_N_1_Kidney_BS2_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R354_N_2_Kidney_BS_1.grc38.txt")
+
+converttoMethylkit("methykit.input/R354_T_1_Kidney_BS_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R354_T_1_Kidney_BS_1.grc38.txt")
+
+converttoMethylkit("methykit.input/R380_N_1_Kidney_BS_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R380_N_1_Kidney_BS_1.grc38.txt")
+
+converttoMethylkit("methykit.input/R380_N_1_Kidney_BS2_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R380_N_2_Kidney_BS_1.grc38.txt")
+
+converttoMethylkit("methykit.input/R380_T_1_Kidney_BS_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R380_T_1_Kidney_BS_1.grc38.txt")
+
+converttoMethylkit("methykit.input/R380_T_1_Kidney_BS2_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R380_T_2_Kidney_BS_1.grc38.txt")
+
+converttoMethylkit("methykit.input/R398_N_2_Kidney_BS_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R398_N_2_Kidney_BS_1.grc38.txt")
+
+converttoMethylkit("R398_T_2_Kidney_BS_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R398_T_2_Kidney_BS_1.grc38.txt")
+
+converttoMethylkit("methykit.input/R400_N1_Kidney_BS_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R400_N_1_Kidney_BS_1.grc38.txt")
+
+converttoMethylkit("methykit.input/R400_T1_Kidney_BS_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R400_T_1_Kidney_BS_1.grc38.txt")
+
+
+
+####using above function I created methylkit input files. those will be stored in methylkit.input folder once u run the script
+
+         ###edit the column and create this
+
+         ##         chrBase   chr    base strand coverage freqC  freqT
+## 1 chr21.9764539 chr21 9764539      R       12 25.00  75.00
+## 2 chr21.9764513 chr21 9764513      R       12  0.00 100.00
+## 3 chr21.9820622 chr21 9820622      F       13  0.00 100.00
+## 4 chr21.9837545 chr21 9837545      F       11  0.00 100.00
+## 5 chr21.9849022 chr21 9849022      F      124 72.58  27.42
+
+
+# group group_name seqnames start   end width strand num_C_fw num_total_fw
+# 1     1       <NA>     chr2 10470 10471     2      *        1            1
+# 2     2       <NA>     chr2 10477 10478     2      *        1            2
+# 3     3       <NA>     chr2 10484 10485     2      *        1            2
+# 4     4       <NA>     chr2 10496 10497     2      *        1            2
+# 5     5       <NA>     chr2 10502 10503     2      *        2            3
+# 6     6       <NA>     chr2 10508 10509     2      *        2            3
+  # meth_fw num_C_rv num_total_rv meth_rv total_C total total_meth
+# 1  100.00        0            0       0       1     1     100.00
+# 2   50.00        0            0       0       1     2      50.00
+# 3   50.00        0            0       0       1     2      50.00
+# 4   50.00        0            0       0       1     2      50.00
+# 5   66.67        0            0       0       2     3      66.67
+# 6   66.67        0            0       0       2     3      66.67
+
+
+
+```
+
+hg19
+```{r}
+
+converttoMethylkithg19 <- function(file=NULL, file.name=NULL){
+
+chain <- import.chain("hg38ToHg19.over.chain")
+#a <- fread("a.txt")
+a <- fread(file)
+#a <- fread("R354_N_1_Kidney_BS_1.readset_sorted.dedup.CpG_profile.strand.combined.csv")
+colnames(a)[1] <- "chr"
+#a$hg38 <- paste(a$chr, a$start,a$end, a$total, a$total_meth, sep="_")
+df<- makeGRangesFromDataFrame(a, keep.extra.columns=TRUE)
+#library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+
+     tx_hg19 <- liftOver(df, chain) %>% as.data.frame
+        #tx_hg19$hg19 <- paste(tx_hg19$seqnames, tx_hg19$start,tx_hg19$end, tx_hg19$total, tx_hg19$total_meth, sep="_")
+        #aa <- tally(group_by(tx_hg19, hg19))
+         tx_hg19$chrBase <- paste(tx_hg19$seqnames,tx_hg19$start, sep=".")
+
+         tx_hg19$freqT <- 100-tx_hg19$total_meth
+
+         tx_hg19 <- select(tx_hg19, c("chrBase", "seqnames", "start", "strand", "total", "total_meth", "freqT"))
+                tx_hg19 <- tx_hg19 %>% unique
+                #tx_hg19$hg19 <- paste(tx_hg19$chrBase, tx_hg19$total, tx_hg19$total_meth, tx_hg19$freqT, sep="_")
+                #when converting hg38 to hg19 many multiple sites in hg38 are mapped to one site in hg19. so we need to remove duplicates.
+                #now here what I do is I remove all the duplicates after conversion of hg19. we loss many information but we can improve this.
+              
+                #count number of same cpgs
+                aa <- tally(group_by(tx_hg19, chrBase)) %>% as.data.frame
+
+                aa <- subset(aa, n <2)
+                ##new addition. remove if u modify this
+                tx_hg19 <- merge(tx_hg19, aa, by.x="chrBase", by.y="chrBase")
+                tx_hg19 <- tx_hg19[,c(1:7)]
+                
+                
+                colnames(tx_hg19) <- c("chrBase", "chr", "base", "strand", "coverage", "freqC", "freqT")
+         write.table(tx_hg19, file=file.name, sep="\t", col.names=T, row.names=F, quote=F)
+
+         }
+
+
+converttoMethylkithg19("methykit.input/R354_N_1_Kidney_BS_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R354_N_1_Kidney_BS_1.txt")
+
+converttoMethylkithg19("methykit.input/R354_N_1_Kidney_BS2_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R354_N_2_Kidney_BS_1.txt")
+
+converttoMethylkithg19("methykit.input/R354_N_1_Kidney_BS2_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R354_N_2_Kidney_BS_1.txt")
+
+converttoMethylkithg19("methykit.input/R354_T_1_Kidney_BS_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R354_T_1_Kidney_BS_1.txt")
+
+converttoMethylkithg19("methykit.input/R380_N_1_Kidney_BS_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R380_N_1_Kidney_BS_1.txt")
+
+converttoMethylkithg19("methykit.input/R380_N_1_Kidney_BS2_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R380_N_2_Kidney_BS_1.txt")
+
+converttoMethylkithg19("methykit.input/R380_T_1_Kidney_BS_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R380_T_1_Kidney_BS_1.txt")
+
+converttoMethylkithg19("methykit.input/R380_T_1_Kidney_BS2_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R380_T_2_Kidney_BS_1.txt")
+
+converttoMethylkithg19("methykit.input/R398_N_2_Kidney_BS_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R398_N_2_Kidney_BS_1.txt")
+
+converttoMethylkithg19("methykit.input/R398_T_2_Kidney_BS_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R398_T_2_Kidney_BS_1.txt")
+
+converttoMethylkithg19("methykit.input/R400_N1_Kidney_BS_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R400_N_1_Kidney_BS_1.txt")
+
+converttoMethylkithg19("methykit.input/R400_T1_Kidney_BS_1.readset_sorted.dedup.CpG_profile.strand.combined.csv", "methykit.input/R400_T_1_Kidney_BS_1.txt")
+
+```
+
+```{r}
+############################################################
+#analysing methylkit input files using methylkit
+
+#module load gcc/5.4.0 r/3.4.3
+setwd("methykit.input")
+library(methylKit)
+
+NormalFiles <- grep("_N_",list.files(),value=TRUE)
+CancerFiles <- grep("_T_",list.files(),value=TRUE)
+file.list = as.list(c( NormalFiles,CancerFiles))
+
+#myobj = methRead(file.list,
+ #          sample.id=list("normal1","normal2","normal3","normal4","normal5","normal6","normal7",
+        #          "tumor1","tumor2","tumor3","tumor4","tumor5"),
+     #      assembly="hg19",
+      #     treatment=c(1,1,1,1,1,1,1,0,0,0,0,0),
+       #    context="CpG"
+        #   )
+
+myobj = methRead(file.list,
+           sample.id=list("normal1","normal2","normal3","normal4","tumor1","tumor2","tumor3","tumor4"),
+           assembly="hg19",
+           treatment=c(1,1,1,1,0,0,0,0),
+           context="CpG"
+           )
+
+
+
+pdf(file=paste("graphs/normal7.hist.pdf",sep=""), height=6,width=8)
+
+getMethylationStats(myobj[[7]],plot=TRUE,both.strands=FALSE)
+dev.off()
+
+        pdf(file=paste("graphs/read.cov.per.base.normal7.hist.pdf",sep=""), height=6,width=8)
+getCoverageStats(myobj[[7]],plot=TRUE,both.strands=FALSE)
+dev.off()
+
+#Filtering samples based on read coverage
+filtered.myobj=filterByCoverage(myobj,lo.count=10,lo.perc=NULL,
+                                      hi.count=NULL,hi.perc=99.9)
+
+#Merging samples
+#meth = unite(filtered.myobj, destrand=FALSE)
+meth = unite(filtered.myobj, destrand=FALSE,min.per.group=3L)
+
+my.diffMeth<-calculateDiffMeth(meth,overdispersion="MN",test="Chisq",mc.cores=6)
+#my.diffMeth<-calculateDiffMeth(meth,mc.cores=2)
+
+
+diff.cpg = getMethylDiff(my.diffMeth ,difference=0,qvalue=1)
+diff.cpg.df <- as(diff.cpg,"GRanges") %>% as.data.frame
+ write.table(diff.cpg.df, file="all.diff.methylated.min.per.grp.3.cpgs.hg38.txt", quote=F, row.name=F, col.names=T, sep="\t")
+
+```
+
+ ################################################
+ ######find the diff methylated cpgs in promoters of few interested genes
+ #goal : create a scatter plot
+
+ #first create with 2 genes
+
+ #we need TSS location of these genes.
+ #create one file with all the one bp TSS for interested genes
+ #find the closest cpgs for each cpgs
+ #filter by 5kb
+ #use cpgs for scatter plot
+```{bash}
+#  module load gcc/5.4.0 bedtools/2.26.0 r/3.4.3
+
+closestBed -D b -t first -a common.hyper.cpgs.found.in.both.rcc4.and.patients.for.great.bed -b TSS.onebp.position.for.finding.nearest.cpgs.sorted.bed
+
+
+# awk -v OFS="\t" '{if($4=="ENSG00000130816" || $4=="ENSG00000119772"){print $0}}' /home/pubudu/projects/rrg-hsn/pubudu/cagekid/methylationarray/cellines/TSS.protein_coding_onebp.position.for.finding.nearest.cpgs.sorted.for.closest.bed | closestBed -D b -t first -a all.diff.methylated.min.per.grp.3.cpgs.hg38.txt -b stdin | less
+ promoter_limit=5000
+ awk -v OFS="\t" '{if($4=="ENSG00000130816" || $4=="ENSG00000119772" || $4=="ENSG00000088305"){print $0}}' /home/pubudu/projects/rrg-hsn/pubudu/cagekid/methylationarray/cellines/TSS.protein_coding_onebp.position.for.finding.nearest.cpgs.sorted.for.closest.bed | sort -k1V,1 -k2,2n > tss.bed
+
+  awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt |  sort -k1V,1 -k2,2n | closestBed -D b -t first -a stdin -b tss.bed | awk -v OFS="\t" '{if($11 != -1){print $0}}'  | awk -v promoter_limit="$promoter_limit" -v OFS="\t" '{if($NF > -promoter_limit && $NF < 0){print $0}}' > closest.distant.to.cpg.from.tss.for.scatter.plot.txt
+
+
+```
+  
+  
+```{r}
+  library(data.table)
+   library(dplyr)
+
+  gene_cpg_closest <- fread(file="closest.distant.to.cpg.from.tss.for.scatter.plot.txt")
+
+   gene_cpg_closest <- select(gene_cpg_closest, c("V12","V7", "V8","V15"))
+
+  gene_cpg_closest$group <- ifelse(gene_cpg_closest$V7 > 0.05, "Not-diff.Methylated", ifelse(gene_cpg_closest$V8 < 0, "Hypomethylated", "Hypermethylated"))
+
+
+  library(ggplot2)
+  pdf("cpgs.closest.genes.pdf",width=12,height=4)
+ggplot(gene_cpg_closest , aes(x=V15,y=V12, size=0.1
+)) +
+  geom_point(aes(color=group))+
+theme_bw()+
+  theme(text = element_text(size=20), axis.text.x = element_text( vjust=0.2), axis.title = element_text(face="bold"))
+  dev.off()
+
+
+
+
+```
+
+
+```{bash}
+
+  #doing the same analysis for hypoxic diff expressed genes found kidney heterochromatin
+  promoter_limit=5000
+ awk -v OFS="\t" '{if($4=="ENSG00000127329" || $4=="ENSG00000136153" || $4=="ENSG00000183098"){print $0}}' /home/pubudu/projects/rrg-hsn/pubudu/cagekid/methylationarray/cellines/TSS.protein_coding_onebp.position.for.finding.nearest.cpgs.sorted.for.closest.bed | sort -k1V,1 -k2,2n > tss.hetero.genes.bed
+
+ #awk -v p_limit=1 -v gene_body=0 -v OFS="\t" 'BEGIN{a=0;b=0;c=0} { if($3=="gene") {gname= substr($10, 1, length($10)-2); gname = substr(gname, 2, length(gname)-1); if($7=="+") {a=$4; if(a-p_limit>0) {b=a-p_limit; c=a+gene_body; print $1=$1,b,c,gname,".",$7}} else if($7=="-"){a=$5; if(a-gene_body>0) {b=a-gene_body; c=a+p_limit; print $1=$1,b,c,gname,".",$7} }}}' /home/pubudu/projects/rrg-hsn/utilities/gene_annotation/gencode/gencode.grc37.annotation.chr.gtf | awk -v OFS="\t" '{split($4,a,/_/);$4=a[1]}1' | awk -v OFS="\t" '{split($4,a,/\./);$4=a[1]}1' | awk -v OFS="\t" '{if($4=="ENSG00000233610"){print $0}}' > tss.hetero.genes.bed
+
+
+  awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt |  sort -k1,1 -k2,2n | closestBed -D b -t first -a stdin -b tss.hetero.genes.bed | awk -v OFS="\t" '{if($11 != -1){print $0}}'  | awk -v promoter_limit="$promoter_limit" -v OFS="\t" '{if($NF > -promoter_limit && $NF < 0){print $0}}' > closest.distant.to.cpg.from.tss.hetero.genes.for.scatter.plot.txt
+
+```
+
+
+```{r}
+  library(data.table)
+   library(dplyr)
+
+   gene_cpg_closest <- fread(file="closest.distant.to.cpg.from.tss.hetero.genes.for.scatter.plot.txt")
+
+   gene_cpg_closest <- select(gene_cpg_closest, c("V12","V7", "V8","V15"))
+
+ # gene_cpg_closest$group <- ifelse(gene_cpg_closest$V7 > 0.05, "Not-diff.Methylated", ifelse(gene_cpg_closest$V8 < 0, "Hypomethylated", "Hypermethylated"))
+ gene_cpg_closest$group <-  ifelse(gene_cpg_closest$V8 < 0, "Hypomethylated", "Hypermethylated")
+
+
+  library(ggplot2)
+  pdf("cpgs.closest.hetero.hypoxia.genes.pdf",width=12,height=4)
+ggplot(gene_cpg_closest , aes(x=V15,y=V12, size=0.1
+)) +
+  geom_point(aes(color=group))+
+  theme_bw()+
+  theme(text = element_text(size=20), axis.text.x = element_text( vjust=0.2), axis.title = element_text(face="bold"))
+  dev.off()
+
+
+```
+

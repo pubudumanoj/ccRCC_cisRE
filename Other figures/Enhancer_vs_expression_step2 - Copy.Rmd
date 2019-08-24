@@ -1,0 +1,1855 @@
+---
+title: Relationship between enhancer methylation, promoter methylation, and expression
+  in ccRCC
+author:
+- name: Hamed S. Najafabadi
+- name: Pubudu Nawarathna
+#date: "`r format(Sys.Date(), "%Y-%B-%d")`"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    df_print: paged
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Preparation
+Load the files and libraries:
+```{r}
+
+library(ggplot2)
+library(ggforce)
+library(gridExtra)
+library(scales)
+library(randomForest)
+library(IHW)
+library(pROC)
+library(fields)
+library(matlab)
+library(stringr)
+library(MASS)
+
+setwd("../../files")
+# Load the environment from the previous step
+load("01.gain_loss_enhancers.table.RData")
+```
+
+# How does gain/loss of enhancers determine gene expression changes in tumor vs. normal?
+Here, we will use the gain/loss score of enhancers together with machine learning to explore the relationship with gene expression changes. The predictors are the gain/loss score and the enhancer distance to the gene. The target is the status of the gene (significant up-regulation, significant down-regulation, or no change)
+
+```{r}
+# create a data frame of the covariates, including the target for prediction
+covariates <- data.frame(
+  target = as.factor( (table$padj_patients_T_vs_N < 0.01)*1 * sign(table$log2FoldChange_patients_T_vs_N) ),
+  enhancer_score = table$gain_model_score,
+  distance = table$distance_to_the_gene_TSS_from_centre_of_enhancer )
+
+# train the model using default parameters of the random forest function
+TN_gene_expression_model <- randomForest( target ~ ., data=covariates, na.action = na.omit )
+# predict gain/loss using this model
+predicted <- predict(TN_gene_expression_model, covariates, type="prob")
+colnames(predicted)[1:3] <- c("expression_down_model_score","expression_nochange_model_score","expression_up_model_score")
+table <- cbind( table, predicted )
+table$predicted_upregulated <- table$expression_up_model_score > 0.7
+table$predicted_downregulated <- table$expression_down_model_score > 0.7
+table$predicted_nochange <- table$expression_nochange_model_score > 0.7
+
+
+summary(table$predicted_upregulated)
+summary(table$predicted_downregulated)
+summary(table$predicted_nochange)
+
+```
+
+
+####supplemenatary figure S4B
+Let's perform cross-validation to examine the performance (leave-one-chromosome-out):
+```{r}
+cv.result <- cv.rf(target ~ .,covariates, id=table$chr) # use only the non-redundant enhancers (the ones marked with TRUE), and use "chr" as the id for cross-validation
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/supfig3/supfig3a_enhancers__genes_roc.pdf", height=5,width=8)
+par(mfrow=c(1,2))
+proc <- roc( (cv.result[,1]=="1"), cv.result[,ncol(cv.result)] ) # the first column of cv.result is the target, and the last column is the predicted probability of being up-regulated
+cutoff <- min( which(proc$threshold > 0.7) )
+print(paste0("At 0.7 cutoff, the sensitivity and specificity for predicting up-regulated genes is ", round(proc$sensitivities[cutoff],2), " and ", round(proc$specificities[cutoff],2), ", respectively."))
+plot(proc,main=str_wrap("Predicting up-regulated genes",20))
+#lines( proc$specificities, proc$thresholds, lty=2 )
+
+proc <- roc( (cv.result[,1]=="-1"), cv.result[,ncol(cv.result)-2] ) # the first column of cv.result is the target, and the last column is the predicted probability of being down-regulated
+cutoff <- min( which(proc$threshold > 0.7) )
+print(paste0("At 0.7 cutoff, the sensitivity and specificity for predicting down-regulated genes is ", round(proc$sensitivities[cutoff],2), " and ", round(proc$specificities[cutoff],2), ", respectively."))
+plot(proc,main=str_wrap("Predicting down-regulated genes",20))
+#lines( proc$specificities, proc$thresholds, lty=2 )
+#dev.off()
+#[1] "At 0.7 cutoff, the sensitivity and specificity for predicting up-regulated genes is 0.5 and 0.97, respectively."
+#[1] "At 0.7 cutoff, the sensitivity and specificity for predicting down-regulated genes is 0.32 and 0.99, respectively."
+
+```
+
+
+```{r}
+proc
+```
+
+#calculate ROC area
+
+```{r}
+library(verification)
+ roc.area( (cv.result[,1]=="1"), cv.result[,ncol(cv.result)] ) 
+ 
+ roc.area( (cv.result[,1]=="-1"), cv.result[,ncol(cv.result)-2] )
+```
+
+The classifier seems to work really well! It is important to note that in reality we are not predicting the up-/down-regulated genes, but instead we are predicted whether an enhancer is associated with an up-/down-regulated gene. The reason these are two different tasks is that each gene can be associated with multiple enhancers, and our unit of prediction is the enhancer itself.
+
+
+#Figure 4
+## What are the inner workings of this classifier?
+
+What is the relationship between enhancer state and gene expression?
+```{r}
+
+
+resolution <- 30
+dist_range <- 5e5
+positive <- covariates[ which(predicted[,3]>0.7) , ]
+negative <- covariates[ which(predicted[,3]<0.7) , ]
+lims=c(-dist_range,dist_range,-0.05,1.05)
+f1 <- kde2d(positive$distance,positive$enhancer_score,lims=lims,n=500,h=c(dist_range*2/resolution,1/resolution))
+f2 <- kde2d(negative$distance,negative$enhancer_score,lims=lims,n=500,h=c(dist_range*2/resolution,1/resolution))
+z <- f1$z-f2$z
+#z <- log10( (f1$z+mean(f1$z)*10)/(f2$z+mean(f2$z)*10) )
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 4/fig4_b_enhancer_up_gene.pdf", height=5,width=8)
+z_range <- max(abs(range(z)))
+z[ z < -z_range ] <- -z_range
+z[ z > z_range ] <- z_range
+image(f2$x,f2$y,z,zlim=c(-z_range,z_range),col=colorRampPalette(c("blue", "white","red"))(100),
+      xlab="Distance from TSS", ylab="Enhancer gain score", main="Predicted up-regulation")
+#dev.off()
+
+
+
+filled.contour(f2$x,f2$y,z,zlim=c(-z_range,z_range),color.palette=colorRampPalette(c("blue","white","red" )),
+               levels = pretty(c(-z_range,z_range), 100), cex.axis = 2.6, cex.lab = 2.8, cex.main=4)
+
+resolution <- 30
+dist_range <- 5e5
+positive <- covariates[ which(predicted[,1]>0.7) , ]
+negative <- covariates[ which(predicted[,1]<0.7) , ]
+f1 <- kde2d(positive$distance,positive$enhancer_score,lims=lims,n=500,h=c(dist_range*2/resolution,1/resolution))
+f2 <- kde2d(negative$distance,negative$enhancer_score,lims=lims,n=500,h=c(dist_range*2/resolution,1/resolution))
+z <- f1$z-f2$z
+
+z_range <- max(abs(range(z)))
+z[ z < -z_range ] <- -z_range
+z[ z > z_range ] <- z_range
+
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 4/fig4_c_enhancer_down_gene.pdf", height=5,width=8)
+image(f2$x,f2$y,z,zlim=c(-z_range,z_range),col=colorRampPalette(c("blue", "white","red"))(100),
+      xlab="Distance from TSS", ylab="Enhancer gain score", main="Predicted down-regulation")
+#dev.off()
+
+
+resolution <- 30
+dist_range <- 5e5
+positive <- covariates[ which(predicted[,2]>0.7) , ]
+negative <- covariates[ which(predicted[,2]<0.7) , ]
+f1 <- kde2d(positive$distance,positive$enhancer_score,lims=lims,n=500,h=c(dist_range*2/resolution,1/resolution))
+f2 <- kde2d(negative$distance,negative$enhancer_score,lims=lims,n=500,h=c(dist_range*2/resolution,1/resolution))
+z <- f1$z-f2$z
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 4/fig4_d_enhancer_notchange_gene.pdf", height=5,width=8)
+z_range <- max(abs(range(z)))
+z[ z < -z_range ] <- -z_range
+z[ z > z_range ] <- z_range
+image(f2$x,f2$y,z,zlim=c(-z_range,z_range),col=colorRampPalette(c("blue", "white","red"))(100),
+      xlab="Distance from TSS", ylab="Enhancer gain score", main="Predicted no-change")
+#dev.off()
+
+
+filled.contour(f2$x,f2$y,z,zlim=c(-z_range,z_range),color.palette=colorRampPalette(c("blue","white","red" )),
+               levels = pretty(c(-z_range,z_range), 100), cex.axis = 2.6, cex.lab = 2.8, cex.main=4)
+```
+
+
+# What is the relationship between epigenetic modulation of gene expression in ccRCC and VHL-mediated changes in gene-expression?
+
+Let's look at the enhancers that are predicted to be associated with up- or down-regulated genes, and see whether they are overall associated with VHL-mediated up-/down-regulated genes
+```{r, fig.height=6, fig.width=7}
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 6/fig6_c_vhl_h_and_vhl_h_enrichment.pdf", height=5,width=6)
+VHL_H <- as.factor( (table$padj_VHL_vs_EV_H < 0.01)*1 * sign(table$log2FoldChange_VHL_vs_EV_H) )
+VHL_N <- as.factor( (table$padj_VHL_vs_EV_N < 0.01)*1 * sign(table$log2FoldChange_VHL_vs_EV_N) )
+
+hypo.results <- enrichment2D(
+  VHL_H,
+  VHL_N,
+  table$predicted_upregulated | table$predicted_downregulated,
+  table$predicted_upregulated,
+  str_wrap("VHL status, hypoxia",width=30),
+  str_wrap("VHL status, normaxia",width=30),
+  logOddsLimit = 0.1 )
+
+hypo.results$plot + ggtitle("Enrichment of enhancer-upregulated genes")
+#dev.off()
+
+```
+
+This graph clearly shows that genes that are down-regulated by VHL both in hypoxia and normaxia are most highly enriched for enhancers that are gained in tumor (more accurately, for genes that are predicted to be up-regulated in tumor because of a nearby gained enhancer). These are "hypoxia-independent VHL-repressed genes". Interestingly, genes that are down-regulated by VHL in normaxia, but not in hypoxia are also enriched, suggesting that hypoxia-dependent VHL repression also plays a role in shaping tumor expression. However, it is important to note that only a fraction of gained enhancers are in these two categories, and the large majority of gained enhancers are not affected by VHL:
+
+```{r}
+cat( paste0( "The fraction of enhancer-mediated gene up-regulation that is recaptured by VHL is ", round( sum(VHL_N=="-1" & table$predicted_upregulated, na.rm=T)/sum(table$predicted_upregulated, na.rm=T), digits = 2 ), "\n" ) )
+```
+
+#Figure 5
+```{r}
+
+lims=c(-1,1,-1,1)
+filter <- !is.na(table$log2FoldChange_VHL_vs_EV_H) & !is.na(table$log2FoldChange_VHL_vs_EV_N)
+positive <- table[ which(table$predicted_upregulated & filter), ]
+negative <- table[ which(table$predicted_downregulated & filter), ]
+f1 <- kde2d(positive$log2FoldChange_VHL_vs_EV_H,positive$log2FoldChange_VHL_vs_EV_N,lims=lims,n=500,h=0.6)
+f2 <- kde2d(negative$log2FoldChange_VHL_vs_EV_H,negative$log2FoldChange_VHL_vs_EV_N,lims=lims,n=500,h=0.6)
+f <- kde2d(table$log2FoldChange_VHL_vs_EV_H[filter],table$log2FoldChange_VHL_vs_EV_N[filter],lims=lims,n=500,h=0.6)
+z <- f1$z-f2$z
+
+z_range <- max(abs(range(z)))
+z[ z < -z_range ] <- -z_range
+z[ z > z_range ] <- z_range
+
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 6/fig6_c_vhl_h_and_vhl_h_kde2d.pdf", height=5,width=6)
+image(f2$x,f2$y,z,zlim=c(-z_range,z_range),col=colorRampPalette(c("blue", "white","red"))(255))
+#dev.off()
+
+#abline(h=0,lt=2)
+#abline(v=0,lt=2)
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 6/fig6_c_vhl_h_and_vhl_h_kde2d_contour.pdf", height=5,width=6)
+contour(f$x, f$x, f$z, col = "black", add = F, method = "edge",
+        vfont = c("sans serif", "plain"), labcex=1)
+#dev.off()
+
+```
+
+```{r}
+dim(z)
+
+```
+
+
+```{r}
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 6/fig6_c_vhl_h_and_vhl_h_enrichment_kde2d.pdf", height=5,width=6)
+
+filled.contour(f2$x,f2$y,z,zlim=c(-z_range,z_range),color.palette=colorRampPalette(c("blue","white","red" )),
+               levels = pretty(c(-z_range,z_range), 50), cex.axis = 2.6, cex.lab = 2.8, cex.main=4)
+contour(f2$x, f2$x, z, col = "pink", add = TRUE, method = "edge",
+        vfont = c("sans serif", "plain"))
+
+#dev.off()
+
+```
+
+Write the list of these genes and their associated enhancers:
+```{r}
+
+write.table( table[ which(
+    VHL_N=="-0" &
+    VHL_H=="-1" &
+    table$predicted_upregulated &
+    table$predicted_gain &
+    table$padj_patients_T_vs_N < 0.01 &
+    table$log2FoldChange_patients_T_vs_N > 0),],
+    file="02.VHL_suppressed.hypoxia_independent.enhancer_mediated_tumor_upregulation.csv",
+    quote=T, row.names = F, sep="," )
+
+```
+
+
+
+
+
+Download TF binding sites as described in the paper
+
+rename the file as TF.binding.sites.bed
+
+```{bash}
+rlength=200
+
+awk -v OFS="\t" -v rlength="$rlength" '{middle=int(($3-$2)/2); middle=middle+$2; if((middle-rlength>0)){print $1,middle-rlength,middle+rlength,$4,$5}}' TF.binding.sites.bed > TF.binding.sites.extended.range.${rlength}bp.from.middle.bed
+
+```
+
+
+####Enhancer TF factor analysis
+Here's the idea is to find significantly enriched TFs in gained or lost enhancers
+For that we need gained and lost enhancers by random forest classifier 
+and TF binding sites from UCSC table browser
+
+load libraries
+```{r}
+library(ggplot2)
+library(dplyr)
+library(zoo)
+library(stringi)
+library(stringr)
+library(data.table)
+library(GenomicRanges)
+library(tidyr)
+library(reshape)
+```
+
+
+#selecting gain+loss as bg
+```{r}
+
+#load TF filenormalized to 400 bp from middle
+##hg19 based
+TF_norm <- fread("TF.binding.sites.extended.range.200bp.from.middle.bed")
+
+colnames(TF_norm) <- c("chr","start","end","TF_name","score")
+
+TF_norm <- makeGRangesFromDataFrame(TF_norm, keep.extra.columns=TRUE)
+
+predicted_element <- fread("enhancers/02.enhancer_vs_expression.table.csv")
+
+predicted_element <- unique(predicted_element)
+element_width=1000
+
+
+
+predicted_element$start <- predicted_element$start+ as.integer((predicted_element$end-predicted_element$start)/2) 
+predicted_element$end <- predicted_element$start 
+predicted_element$start <- predicted_element$start - (element_width/2) +1
+predicted_element$end  <- predicted_element$end + (element_width/2)
+
+
+predicted_element<- dplyr::select(predicted_element, c("chr", "start", "end", "Peak","predicted_gain","predicted_loss"))
+predicted_element <- subset(predicted_element, Peak!="")
+
+gain <- subset(predicted_element, predicted_gain==T & predicted_loss==F)
+
+lost <- subset(predicted_element, predicted_gain==F & predicted_loss==T)
+
+
+
+
+gain <- makeGRangesFromDataFrame(gain, keep.extra.columns=TRUE)
+lost <- makeGRangesFromDataFrame(lost, keep.extra.columns=TRUE)
+	
+TFList <- TF_norm %>% as.data.frame() %>%dplyr::select(TF_name) %>% unique()
+TFList2 <- TF_norm %>% as.data.frame() %>%dplyr::select(TF_name) %>% unique()
+#i=1
+for(i in 1:dim(TFList)[1]){
+  TF_overlap <- subset(TF_norm, TF_name==TFList[i,1])
+  overlap_TF_gain <- countOverlaps(  gain, TF_overlap, ignore.strand=TRUE,type="any")
+    overlap_TF_gain <- as.data.frame(overlap_TF_gain)
+ overlap_TF_gain <- subset(overlap_TF_gain, overlap_TF_gain > 0) %>% nrow()
+ 
+overlap_TF_loss <- countOverlaps(lost , TF_overlap,  ignore.strand=TRUE,type="any")
+  overlap_TF_loss <- as.data.frame(overlap_TF_loss)
+ overlap_TF_loss <- subset(overlap_TF_loss, overlap_TF_loss > 0) %>% nrow() 
+ 
+ TFList[i,2] <- overlap_TF_gain
+ TFList[i,3] <- overlap_TF_loss
+ 
+
+ 
+ TFList[i,4]<-phyper((overlap_TF_gain)-1,length(gain),length(lost),overlap_TF_gain+overlap_TF_loss, lower.tail = FALSE)
+ 
+ TFList[i,5]<-phyper((overlap_TF_loss)-1,length(lost),length(gain),overlap_TF_gain+overlap_TF_loss, lower.tail = FALSE)
+  V1 = overlap_TF_gain
+  V2 = length(gain)-overlap_TF_gain
+  V3 = overlap_TF_loss
+  V4 = length(lost)-overlap_TF_loss
+  
+  TFList2[i,2] <- V1
+ TFList2[i,3] <- V2
+ TFList2[i,4] <- V3
+ TFList2[i,5] <- V4
+ 
+     
+TFList[i,6] <- log2((V1/(V1+V3))/(V2/(V2+V4)))
+  TFList[i,7] <- -log2((V3/(V1+V3))/(V4/(V2+V4)))
+  
+  #TFList[i,8] <- log2((V1/(V1+V2))/(V3/(V3+V4)))
+    #CTCF bound CTCF not bound 
+#gain     V2`        V2 
+#loss     V3        V4
+
+#fd of enrichment of gain = (V1/V1+V3)/(V2/V2+V4)
+
+
+ 
+}
+   TFList$fdr_gain <- p.adjust(TFList[,4], "BH")
+   TFList$fdr_loss <- p.adjust(TFList[,5], "BH")
+   
+gained_TF <- TFList %>% subset(fdr_gain < 0.05)
+lost_TF <- TFList %>% subset(fdr_loss < 0.05)
+
+gained_TF <- select(gained_TF, c("TF_name", "V2","V3","V6","fdr_gain"))
+colnames(gained_TF) <- c("TF_Name", "gain_count","lost_count", "Enrichment","FDR")
+gained_TF$group <- "gained"
+lost_TF <- select(lost_TF, c("TF_name", "V2","V3","V7","fdr_loss"))
+colnames(lost_TF) <- c("TF_Name", "gain_count","lost_count","Enrichment","FDR")
+lost_TF$group <- "lost"
+#TF_norm %>% subset( overlap_TF_gain > 0) %>% length
+
+df_final <- rbind(gained_TF, lost_TF)
+
+df_final <- df_final[order(-df_final$Enrichment),]
+#df_final <- melt(df_final, id=c(1))
+
+
+        df_final_gain_loss_bg <- df_final    
+        df_final_gain_loss_bg
+        
+        temp <- TFList[c(1:4,6,8,5,7,9)]
+        
+        colnames(temp)[c(2:9)] <- c("gain_count", "loss_count", "P-value_gain","Enrichment_gain","fdr_gain", "P-value_loss", "Enrichment_loss","fdr_loss")
+        
+        colnames(temp)[c(2:9)] <- paste0(colnames(temp)[c(2:9)],"_diff_bg")
+        
+TFList_diff_bg  <- temp
+
+colnames(TFList2)[c(2:dim(TFList2)[2])] <- c(paste0(rep("V", 4),1:4, "_gain"))
+colnames(TFList2)[c(2:dim(TFList2)[2])] <- paste0(colnames(TFList2)[c(2:dim(TFList2)[2])],"_diff_bg")
+
+TFList_diff_bg_merge <- merge(TFList_diff_bg,TFList2)
+
+TFList_diff_bg_merge <- TFList_diff_bg_merge[c(1,4:dim(TFList_diff_bg_merge)[2])]
+
+```
+
+  TF target genes analysis
+```{r}
+
+#load TF filenormalized to 400 bp from middle
+##hg19 based
+TF_norm <- fread("TF.binding.sites.extended.range.200bp.from.middle.bed")
+
+TF_list <- fread("Enhancer_TF_analysis_all4_tests_without_filtering_by_FDR_add_cont_table_pathology_atlas.csv")
+colnames(TF_norm) <- c("chr","start","end","TF_name","score")
+
+TF_norm <- makeGRangesFromDataFrame(TF_norm, keep.extra.columns=TRUE)
+
+predicted_element <- fread("02.enhancer_vs_expression.table.csv")
+
+predicted_element <- unique(predicted_element)
+
+predicted_element_ori <- predicted_element
+element_width=1000
+
+
+
+predicted_element$start <- predicted_element$start+ as.integer((predicted_element$end-predicted_element$start)/2) 
+predicted_element$end <- predicted_element$start 
+predicted_element$start <- predicted_element$start - (element_width/2) +1
+predicted_element$end  <- predicted_element$end + (element_width/2)
+
+
+predicted_element<- dplyr::select(predicted_element, c("chr", "start", "end", "Peak","predicted_gain","predicted_loss"))
+predicted_element <- subset(predicted_element, Peak!="")
+
+gain <- subset(predicted_element, predicted_gain==T & predicted_loss==F)
+
+lost <- subset(predicted_element, predicted_gain==F & predicted_loss==T)
+
+
+
+
+gain <- makeGRangesFromDataFrame(gain, keep.extra.columns=TRUE)
+lost <- makeGRangesFromDataFrame(lost, keep.extra.columns=TRUE)
+	
+#remove comment if u need lost
+#gain <- lost
+
+
+ 
+  overlap_TF_gain <- findOverlaps(  gain, TF_norm, ignore.strand=TRUE,type="any")
+  
+queryhits <-  gain[ queryHits(overlap_TF_gain)] %>% as.data.frame()
+ 
+ subhits <-  TF_norm[ subjectHits(overlap_TF_gain)] %>% as.data.frame()
+ 
+ colnames(queryhits) <- paste0(c(colnames(queryhits)),"_query")
+ 
+ 
+ df_gain_merge <- cbind(subhits ,queryhits)
+ 
+ temp_gain_merge <- df_gain_merge %>% select(c("TF_name", "Peak_query"))
+ 
+ #chnage gain lost below
+ 
+ TF_list_gain <- subset(TF_list, TF_list$significant_all4_tests==T & TF_list$significant_all4_tests_type=="Gain")
+ 
+ TF_list_gain <- select(TF_list_gain, c("Gene name", "Gene"))
+ #temp <- subset(temp, temp$TF_name=="GATA3") %>% unique()
+ 
+# temp <- merge(predicted_element_ori, temp, by.x="Peak", by.y="Peak_query" )
+ 
+ #hyper_count <- sum(temp$RCC4_450k_array.hypermethylated.CpGs.count.on.the.enhancer.10kb.region)
+ #hypo_count <- sum(temp$RCC4_450k_array.hypomethylated.CpGs.count.on.the.enhancer.10kb.region)
+    
+```
+ 
+ 
+ TF target genes analysis continues....
+```{r}
+#load file
+
+predicted_element_ori_temp <- select(predicted_element_ori, c("Peak", "Gene.name"))
+
+TF_gain_list_enh <- merge(merge(TF_list_gain, temp_gain_merge, by.x="Gene name",by.y="TF_name"), predicted_element_ori_temp, by.x="Peak_query", by.y="Peak")
+
+TF_gain_list_enh_temp <- select(TF_gain_list_enh, c("Gene name", "Gene.name")) %>% unique()
+
+
+colnames(TF_gain_list_enh_temp) <- c("TF_Name","Gene")
+
+#subset(TF_gain_list_enh_temp, TF_Name=="BATF") 
+t.group <- data.frame(t(TF_gain_list_enh_temp))
+
+#replace column names by first row values
+colnames(t.group) <- as.character(unlist(t.group[1,]))
+
+#remove first row
+t.group <- t.group[-1, ]
+
+
+#df[,names(df) == 'a'] will select all columns with name a
+#unlist will convert above columns into 1 single vector
+#unname will remove some stray rownames given to these vectors.
+#unique(names(df)) will give you unique column names in df
+#sapply will apply the inline function to all values of unique(names(df))
+
+#Create a list with genes in the rows and EREs in the columns( each column represent an ERE and rows represent genes overlapped in that ERE
+
+
+t.group <- sapply(unique(names(t.group)), function(x) unname(unlist(t.group[,names(t.group)==x])))
+
+#order list named (grp1 to grp5)
+t.group <- t.group[order(names(t.group))]
+colnames_t_grp <- names(t.group)
+#list to data frame
+t.group <-as.data.frame((stri_list2matrix(t.group)))
+
+
+
+colnames(t.group) <- colnames_t_grp
+
+tot_gain_tf_genes <- TF_gain_list_enh_temp %>% select(Gene) %>% unique()
+
+
+#write.table(t(t.group), file="enhancers/gained_enhancer_TF_gsea.gmt", col.names = F, row.names = T, quote = F, sep = "\t")
+
+#write.table(tot_gain_tf_genes, file="enhancers/gained_enh_TF/gained_enhancer_TF_genes.txt", col.names = F, row.names = F, quote = F, sep = "\t")
+
+
+#write.table(t(t.group), file="enhancers/lost_enhancer_TF_gsea.gmt", col.names = F, row.names = T, quote = F, sep = "\t")
+
+#write.table(tot_gain_tf_genes, file="enhancers/lost_enh_TF/lost_enhancer_TF_genes.txt", col.names = F, row.names = F, quote = F, sep = "\t")
+
+#write.table(t.group, file="enhancers/gained_enh_TF/gained_enhancer_TF_genes_all.txt", col.names = T, row.names = F, quote = F, sep = "\t")
+TF_gain_list_enh_unique <- TF_gain_list_enh_temp
+
+#write.table(t.group, file="enhancers/lost_enh_TF/lost_enhancer_TF_genes_all.txt", col.names = T, row.names = F, quote = F, sep = "\t")
+TF_gain_list_enh_unique <- TF_gain_list_enh_temp
+
+#count number of occurences for each gene
+sum_table <- TF_gain_list_enh_unique[, .(rowCount = .N), by = Gene]
+
+TF_gain_list_enh_unique <- merge(TF_gain_list_enh_unique, sum_table, by="Gene") %>% subset(rowCount ==1)
+
+TF_gain_list_enh_unique <- select(TF_gain_list_enh_unique, c("TF_Name","Gene"))
+
+
+t.group <- data.frame(t(TF_gain_list_enh_unique))
+
+#replace column names by first row values
+colnames(t.group) <- as.character(unlist(t.group[1,]))
+
+#remove first row
+t.group <- t.group[-1, ]
+
+
+#df[,names(df) == 'a'] will select all columns with name a
+#unlist will convert above columns into 1 single vector
+#unname will remove some stray rownames given to these vectors.
+#unique(names(df)) will give you unique column names in df
+#sapply will apply the inline function to all values of unique(names(df))
+
+#Create a list with genes in the rows and EREs in the columns( each column represent an ERE and rows represent genes overlapped in that ERE
+
+
+t.group <- sapply(unique(names(t.group)), function(x) unname(unlist(t.group[,names(t.group)==x])))
+
+#order list named (grp1 to grp5)
+t.group <- t.group[order(names(t.group))]
+colnames_t_grp <- names(t.group)
+#list to data frame
+t.group <-as.data.frame((stri_list2matrix(t.group)))
+
+
+
+colnames(t.group) <- colnames_t_grp
+
+#write.table(t.group, file="enhancers/lost_enh_TF/lost_enhancer_TF_genes_all_unique.txt", col.names = T, row.names = F, quote = F, sep = "\t")
+
+#write.table(t.group, file="enhancers/gained_enh_TF/gained_enhancer_TF_genes_all_unique.txt", col.names = T, row.names = F, quote = F, sep = "\t")
+
+write.table(t(t.group), file="enhancers/gained_enh_TF/gained_enhancer_TF_genes_all_unique.gmt", col.names = F, row.names = T, quote = F, sep = "\t")
+
+#write.table(t(t.group), file="enhancers/lost_enh_TF/lostenhancer_TF_genes_all_unique.gmt", col.names = F, row.names = T, quote = F, sep = "\t")
+
+
+```
+
+description about above code
+
+I did a gsea analysis using unique target genes with vhl to see whether unique genes show consistant pattern with patients. but its not
+ 
+ 
+ Select only up regulated target genes of Tfs that are enriched in gained enhancers for cpdb analysis
+ 
+```{r}
+
+gain_target_list <- fread( file="gained_enh_TF/gained_enhancer_TF_genes.txt", header = F)
+
+####RNA seq data load
+	vhlev_H <- read.csv(file="RNAseqRCC4/RNA.seq.hypoxia.VHLandwildtype.control.is.EV.csv")
+	vhlev_H$rn <- gsub("\\..*","",vhlev_H$rn)
+	vhlev_H <- select(vhlev_H, c("rn","log2FoldChange","padj"))
+	colnames(vhlev_H) <- c("rn","log2FoldChange_vhlev_H","padj_vhlev_H")
+
+	
+	vhlev_N <- read.csv(file="RNAseqRCC4/RNA.seq.normoxia.VHLandwildtype.control.is.EV.csv")
+	vhlev_N$rn <- gsub("\\..*","",vhlev_N$rn)
+	vhlev_N <- select(vhlev_N, c("rn","log2FoldChange","padj"))
+	colnames(vhlev_N) <- c("rn","log2FoldChange_vhlev_N","padj_vhlev_N")
+	
+	patients_diff_genes <- read.csv(file="ordered down regulated genes paired conventional patients.csv")
+	patients_diff_genes <- select(patients_diff_genes, c("X","log2FoldChange","padj"))
+	colnames(patients_diff_genes) <- c("rn","log2FoldChange_patients","padj_patients")
+	
+	gene.names <- fread("RNASeqRCC4/gene_reference.txt", header = F)
+gene.names$V1 <- word(gene.names$V1,1, sep = "\\.")
+
+patients_diff_genes <- merge(patients_diff_genes, gene.names, by.x="rn", by.y="V1")
+
+patients_diff_genes <- subset(patients_diff_genes, padj_patients < 0.05)
+
+
+gain_target_list <- merge(gain_target_list, patients_diff_genes, by.x="V1", by.y="V3")
+
+gain_target_list <- gain_target_list %>% subset(log2FoldChange_patients > 0)
+
+
+write.table(gain_target_list$V1, file="enhancers/gained_enh_TF/gained_enhancer_TF_target_upregulated_genes_cpdb.txt", col.names = F, row.names = F, quote = F, sep = "\t")
+
+```
+ 
+ 
+ 
+ Select only down regulated target genes of Tfs that are enriched in lost enhancers for cpdb analysis
+ 
+```{r}
+
+loss_target_list <- fread( file="enhancers/lost_enh_TF/lost_enhancer_TF_genes.txt", header = F)
+
+
+loss_target_list <- merge(loss_target_list, patients_diff_genes, by.x="V1", by.y="V3")
+
+loss_target_list <- loss_target_list %>% subset(log2FoldChange_patients < 0)
+
+
+write.table(loss_target_list$V1, file="enhancers/lost_enh_TF/lost_enhancer_TF_target_downregulated_genes_cpdb.txt", col.names = F, row.names = F, quote = F, sep = "\t")
+
+```
+
+####Create bg list for enhance cpdb enrichment analysis
+
+#bg 1 is the default bg in cpdb
+#bg 2 all significant genes
+
+```{r}
+
+
+write.table(patients_diff_genes$V3, file="enhancers/gained_enh_TF/bg2_all_significant_genes_fdr_0.05_cpdb.txt", col.names = F, row.names = F, quote = F, sep = "\t")
+```
+
+
+bg 3 all  genes associated with enhancers
+```{r}
+enhancer_genes <- fread("enhancers/02.enhancer_vs_expression.table.csv")
+
+enhancer_genes <- subset(enhancer_genes, Peak!="")
+enhancer_genes <- select(enhancer_genes, Gene.name) %>% unique
+.
+
+write.table(enhancer_genes, file="enhancers/gained_enh_TF/bg3_all_enhancer_genes_cpdb.txt", col.names = F, row.names = F, quote = F, sep = "\t")
+```
+
+find pathways enriched in 3 bgs
+
+gained up
+
+```{r}
+
+bg1 <- fread("enhancers/gained_enh_TF/up_regulated_gained_with_bg1.tab")
+bg1 <- select(bg1, c("pathway","external_id"))
+bg2 <- fread("enhancers/gained_enh_TF/up_regulated_gained_with_bg2.tab")
+bg2 <- select(bg2, c("pathway","external_id"))
+bg3 <- fread("enhancers/gained_enh_TF/up_regulated_gained_with_bg3.tab")
+bg3 <- select(bg3, c("pathway","external_id"))
+
+df_merge_pathways <- merge(merge(bg1,bg2, by="external_id"), bg3, by="external_id")
+
+write.table(df_merge_pathways$pathway, file="enhancers/gained_enh_TF/common_pathwyas_3bgs_gained_upregulated_genes_cpdb.txt", col.names = F, row.names = F, quote = F, sep = "\t")
+
+```
+```{r}
+library(matrixStats)
+```
+
+find pathways enriched in 4 for sup table 4
+```{r}
+bg1 <- fread("enhancers/gained_enh_TF/up_regulated_gained_with_bg1.tab")
+bg1 <- select(bg1, c("pathway","external_id","q-value","source","members_input_overlap"))
+bg2 <- fread("enhancers/gained_enh_TF/up_regulated_gained_with_bg2.tab")
+bg2 <- select(bg2, c("external_id","q-value"))
+colnames(bg2) <-  c("external_id","q-value2")
+bg3 <- fread("enhancers/gained_enh_TF/up_regulated_gained_with_bg3.tab")
+bg3 <- select(bg3, c("external_id","q-value"))
+colnames(bg3) <-  c("external_id","q-value3")
+
+df_merge_pathways <- merge(merge(bg1,bg2, by="external_id"), bg3, by="external_id")
+
+rowmax_mat <- as.matrix(select(df_merge_pathways, c("q-value","q-value2", "q-value3")))
+df_merge_pathways$max_fdr <- rowMaxs(rowmax_mat)
+
+df_merge_pathways <- subset(df_merge_pathways, max_fdr < 0.05)
+
+df_merge_pathways <- df_merge_pathways[order(df_merge_pathways$max_fdr)]
+
+df_merge_pathways <- df_merge_pathways[,c(2,8,4:5)]
+write.table(df_merge_pathways, file="C:/Users/pubud/Dropbox/thesis/tables/common_pathwyas_3bgs_gained_upregulated_genes_cpdb.txt", col.names = T, row.names = F, quote = F, sep = "\t")
+```
+
+create bar plor for figure
+```{r, fig.width=10}
+
+bg1 <- fread("enhancers/gained_enh_TF/up_regulated_gained_with_bg1.tab")
+#bg1 <- select(bg1, c("pathway","external_id"))
+bg2 <- fread("enhancers/gained_enh_TF/up_regulated_gained_with_bg2.tab")
+#bg2 <- select(bg2, c("pathway","external_id"))
+bg3 <- fread("enhancers/gained_enh_TF/up_regulated_gained_with_bg3.tab")
+#bg3 <- select(bg3, c("pathway","external_id"))
+
+df_merge_pathways <- merge(merge(bg1,bg2, by="external_id",  suffixes=c("_bg1","_bg2")), bg3, by="external_id")
+
+df_merge_pathways <- select(df_merge_pathways, c("pathway", "q-value_bg1","q-value_bg2","q-value"))
+
+df_merge_pathways$max_FDR <- rowMins(as.matrix(df_merge_pathways[,c(2:4)]))
+
+df_merge_pathways <- df_merge_pathways[order(df_merge_pathways$max_FDR)]
+
+df_merge_pathways <- head(df_merge_pathways, n=20)
+
+#df_merge_pathways$pathway = str_wrap(df_merge_pathways$pathway, width = 35)
+pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 5/fig5_c_TF_enhancers_up_target_genes_cpdb.pdf", height=12,width=15) 
+ggplot(df_merge_pathways, aes(x = factor(df_merge_pathways$pathway, levels = as.character(rev(df_merge_pathways$pathway))), y = log10(df_merge_pathways$max_FDR))) +
+   
+  #guides(fill=guide_legend(title="log P Value"))+
+  geom_bar(stat = "identity", width = 0.5, colour="black", fill="black")+
+ 
+  theme_bw()+
+  # scale_fill_manual(values=c( "blue"))+
+  scale_fill_gradient(low="#800033",high="#ff80b3", name = "FDR")+
+    theme(legend.key.size = unit(1.5, 'lines'), axis.text.x = element_text( size=16),text = element_text(size=20), legend.position="right",panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.length=unit(.25, "cm"))+
+  coord_flip()+
+  scale_y_reverse()
+dev.off()
+
+
+ 
+
+
+```
+
+lost down
+
+```{r}
+
+bg1 <- fread("enhancers/lost_enh_TF/down_regulated_lost_with_bg1.tab")
+bg1 <- select(bg1, c("pathway","external_id"))
+bg2 <- fread("enhancers/lost_enh_TF/down_regulated_lost_with_bg2.tab")
+bg2 <- select(bg2, c("pathway","external_id"))
+bg3 <- fread("enhancers/lost_enh_TF/down_regulated_lost_with_bg3.tab")
+bg3 <- select(bg3, c("pathway","external_id"))
+
+df_merge_pathways <- merge(merge(bg1,bg2, by="external_id"), bg3, by="external_id")
+
+write.table(df_merge_pathways$pathway, file="enhancers/lost_enh_TF/common_pathwyas_3bgs_lost_downregulated_genes_cpdb.txt", col.names = F, row.names = F, quote = F, sep = "\t")
+
+```
+
+```{r, fig.width=15}
+
+bg1 <- fread("enhancers/lost_enh_TF/down_regulated_lost_with_bg1.tab")
+#bg1 <- select(bg1, c("pathway","external_id"))
+bg2 <- fread("enhancers/lost_enh_TF/down_regulated_lost_with_bg2.tab")
+#bg2 <- select(bg2, c("pathway","external_id"))
+bg3 <- fread("enhancers/lost_enh_TF/down_regulated_lost_with_bg3.tab")
+#bg3 <- select(bg3, c("pathway","external_id"))
+
+df_merge_pathways <- merge(merge(bg1,bg2, by="external_id",  suffixes=c("_bg1","_bg2")), bg3, by="external_id")
+
+df_merge_pathways <- select(df_merge_pathways, c("pathway", "q-value_bg1","q-value_bg2","q-value"))
+
+df_merge_pathways$max_FDR <- rowMins(as.matrix(df_merge_pathways[,c(2:4)]))
+
+df_merge_pathways <- df_merge_pathways[order(df_merge_pathways$max_FDR)]
+
+df_merge_pathways <- head(df_merge_pathways, n=20)
+
+df_merge_pathways <- subset(df_merge_pathways, df_merge_pathways$max_FDR < 0.05)
+
+#df_merge_pathways$pathway = str_wrap(df_merge_pathways$pathway, width = 35)
+pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 5/fig5_d_TF_enhancers_down_target_genes_cpdb.pdf", height=3,width=12) 
+ggplot(df_merge_pathways, aes(x = factor(df_merge_pathways$pathway, levels = as.character(rev(df_merge_pathways$pathway))), y = log10(df_merge_pathways$max_FDR))) +
+   
+  #guides(fill=guide_legend(title="log P Value"))+
+  geom_bar(stat = "identity", width = 0.5, colour="black", fill="black")+
+ 
+  theme_bw()+
+  # scale_fill_manual(values=c( "blue"))+
+  scale_fill_gradient(low="#800033",high="#ff80b3", name = "FDR")+
+    theme(legend.key.size = unit(1.5, 'lines'), axis.text.x = element_text( size=16),text = element_text(size=20), legend.position="right",panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.length=unit(.25, "cm"))+
+  coord_flip()+
+  scale_y_reverse()
+dev.off()
+
+
+ 
+
+
+```
+
+```{r, fig.height=16, fig.width=8}
+
+ggplot(as.data.frame(df_final$Enrichment),  aes(x = factor(df_final$TF_Name, levels = as.character(rev(df_final$TF_Name))), y = df_final$Enrichment, fill=log(df_final$FDR))) +
+  #guides(fill=guide_legend(title="log P Value"))+
+  geom_bar(stat = "identity")+
+  theme_bw()+
+   scale_fill_gradient(low="red",high="#fcf3cf", name = "log(FDR of \nEnrichment)")+
+    theme(legend.key.size = unit(1.5, 'lines'), axis.text.x = element_text( size=21),text = element_text(size=19), axis.ticks.length=unit(.25, "cm"), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+						panel.background = element_blank(), axis.line = element_line(colour = "black"),legend.position="right")+
+  labs(y="log2 FD of Enrichment",x=paste0("TF or Epigenetic Regulator"))+
+  coord_flip()
+
+
+#theme(plot.title = element_text(size=12), legend.position = "bottom", text = element_text(size=29),
+    #     axis.text = element_text( size=21), legend.key.size = unit(1.5, 'lines'), 
+     #     panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+			#			panel.background = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.length=unit(.25, "cm"))+labs(x="Patient",y=paste0("% Peak overklap with \nRoadmap"))
+
+```
+
+```{r, fig.height=16, fig.width=8}
+barplot_heterochromatin_genes <- function(df1=NULL, df2=NULL){
+  
+ggplot(NULL, aes(factor(ID, levels = as.character(rev(ID))), count)) + 
+  geom_bar(stat="identity", aes(fill = "Gained Enhancers"), data = df1) +
+  geom_bar(stat="identity",aes(fill = "Lost Enhancers"), data = df2, alpha = 0.7)+
+  scale_fill_manual(values = c("red","blue"))+
+theme(text = element_text(size=18), axis.text=element_text(size=16), axis.text.x = element_text(angle = 90),
+        axis.title=element_text(size=14,face="bold"))+
+  guides(fill=guide_legend(title="Overlap Type"))+
+    #theme_minimal()+
+    theme_bw()+
+    theme(legend.key.size = unit(1.5, 'lines'), axis.text.x = element_text( size=21),axis.text.y = element_blank(),text = element_text(size=19), axis.ticks.length=unit(.25, "cm"), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+						panel.background = element_blank(), axis.line = element_line(colour = "black"),legend.position="right")+
+  labs(y="Enhancer overlap counts with TF",x=paste0(""))+
+  coord_flip()
+
+}
+gained_TF <- TFList %>% subset(fdr_gain < 0.05)
+lost_TF <- TFList %>% subset(fdr_loss < 0.05)
+
+gained_TF <- select(gained_TF, c("TF_name", "V2","V3","V6"))
+colnames(gained_TF)[4] <- "enrichment"
+gained_TF$group <- "gained"
+lost_TF <- select(lost_TF, c("TF_name", "V2","V3","V7"))
+colnames(lost_TF)[4] <- "enrichment"
+lost_TF$group <- "lost"
+
+
+df_final <- rbind(gained_TF, lost_TF)
+df_final <- df_final[order(-df_final$enrichment),]
+df_gain_count <- select(df_final, c("TF_name","V2" )) %>% as.data.frame()
+colnames(df_gain_count) <- c("ID", "count")
+
+df_lost_count <- select(df_final, c("TF_name","V3" )) %>% as.data.frame()
+colnames(df_lost_count) <- c("ID", "count")
+
+barplot_heterochromatin_genes(df1=df_gain_count, df2=df_lost_count)
+```
+
+
+##enrichment analysis for correcting the distribution bias
+
+            TF1 | sum(TF2 | TF3 .....)
+    Gain
+    Lost  
+
+####get the TFList from above analysis
+
+#####we need number of gain and lost for each TF
+
+```{r}
+#TFList <- aa
+TFList <- select(TFList, c("TF_name","V2","V3"))
+
+TFList2 <- TFList
+for(i in 1:dim(TFList)[1]){
+ 
+  
+  
+  successBG <- sum(TFList$V2)
+  failBG <- sum(TFList$V3)
+  overlap_TF_gain <- TFList[i,2]
+  overlap_TF_loss <-TFList[i,3]
+  
+  
+  TFList[i,4]<-phyper((overlap_TF_gain)-1,successBG,failBG,overlap_TF_gain+overlap_TF_loss, lower.tail = FALSE)
+#  
+  TFList[i,5]<-phyper((overlap_TF_loss)-1,failBG,successBG,overlap_TF_gain+overlap_TF_loss, lower.tail = FALSE)
+   V1 = overlap_TF_gain
+   V2 = successBG-overlap_TF_gain
+   V3 = overlap_TF_loss
+   V4 = failBG-overlap_TF_loss
+      
+ TFList[i,6] <- log2((V1/(V1+V3))/(V2/(V2+V4)))
+   TFList[i,7] <- -log2((V3/(V1+V3))/(V4/(V2+V4)))
+   
+     TFList2[i,2] <- V1
+ TFList2[i,3] <- V2
+ TFList2[i,4] <- V3
+ TFList2[i,5] <- V4
+ 
+    #CTCF bound other TF bound except CTCF 
+#gain     V2`        V2 
+#loss     V3        V4
+
+#fd of enrichment of gain = (V1/V1+V3)/(V2/V2+V4)
+
+
+ 
+}
+
+
+ TFList$fdr_gain <- p.adjust(TFList[,4], "BH")
+   TFList$fdr_loss <- p.adjust(TFList[,5], "BH")
+   
+gained_TF <- TFList %>% subset(fdr_gain < 0.05)
+lost_TF <- TFList %>% subset(fdr_loss < 0.05)
+
+gained_TF <- select(gained_TF, c("TF_name", "V2","V3","V6","fdr_gain"))
+colnames(gained_TF) <- c("TF_Name","gain_count","lost_count", "Enrichment","FDR")
+gained_TF$group <- "gained"
+lost_TF <- select(lost_TF, c("TF_name", "V2","V3","V7","fdr_loss"))
+colnames(lost_TF) <- c("TF_Name", "gain_count","lost_count","Enrichment","FDR")
+lost_TF$group <- "lost"
+#TF_norm %>% subset( overlap_TF_gain > 0) %>% length
+
+df_final <- rbind(gained_TF, lost_TF)
+
+df_final <- df_final[order(-df_final$Enrichment),]
+#df_final <- melt(df_final, id=c(1))
+
+
+        df_final_gain_loss_bg_corr_bias <- df_final   
+        df_final_gain_loss_bg_corr_bias
+        
+        
+          temp <- TFList[c(1:4,6,8,5,7,9)]
+        
+        colnames(temp)[c(2:9)] <- c("gain_count", "loss_count", "P-value_gain","Enrichment_gain","fdr_gain", "P-value_loss", "Enrichment_loss","fdr_loss")
+        
+        colnames(temp)[c(2:9)] <- paste0(colnames(temp)[c(2:9)],"_diff_bg_bias_corrected")
+        
+TFList_diff_bg_bias_corrected  <- temp
+
+TFList2
+
+colnames(TFList2)[c(2:dim(TFList2)[2])] <-c(paste0(rep("V", 4),1:4, "_gain"))
+colnames(TFList2)[c(2:dim(TFList2)[2])] <- paste0(colnames(TFList2)[c(2:dim(TFList2)[2])],"_diff_bg_bias_corrected")
+
+TFList_diff_bg_bias_corrected_merge <- merge(TFList_diff_bg_bias_corrected,TFList2)
+
+TFList_diff_bg_bias_corrected_merge <- TFList_diff_bg_bias_corrected_merge[c(1,4:dim(TFList_diff_bg_bias_corrected_merge)[2])]
+
+TFList_diff_bg_bias_corrected_merge
+
+```
+
+
+
+#selecting gain and all others as bg 
+
+```{r}
+
+#load TF filenormalized to 400 bp from middle
+##hg19 based
+#TF_norm <- fread("TF.binding.sites.extended.range.200bp.from.middle.bed")
+
+#colnames(TF_norm) <- c("chr","start","end","TF_name","score")
+
+#TF_norm <- makeGRangesFromDataFrame(TF_norm, keep.extra.columns=TRUE)
+
+predicted_element <- fread("enhancers/02.enhancer_vs_expression.table.csv")
+
+predicted_element <- subset(predicted_element, !is.na("Peak"))
+predicted_element <- unique(predicted_element)
+element_width=1000
+
+
+
+predicted_element$start <- predicted_element$start+ as.integer((predicted_element$end-predicted_element$start)/2) 
+predicted_element$end <- predicted_element$start 
+predicted_element$start <- predicted_element$start - (element_width/2) +1
+predicted_element$end  <- predicted_element$end + (element_width/2)
+
+
+predicted_element<- select(predicted_element, c("chr", "start", "end", "Peak","predicted_gain","predicted_loss"))
+predicted_element <- subset(predicted_element, Peak!="")
+
+gain <- subset(predicted_element, predicted_gain==T & predicted_loss==F)
+
+lost <- subset(predicted_element, predicted_gain!=T )
+
+
+
+
+gain <- makeGRangesFromDataFrame(gain, keep.extra.columns=TRUE)
+lost <- makeGRangesFromDataFrame(lost, keep.extra.columns=TRUE)
+	
+TFList <- TF_norm %>% as.data.frame() %>%select(TF_name) %>% unique()
+
+TFList2 <- TFList
+
+for(i in 1:dim(TFList)[1]){
+  TF_overlap <- subset(TF_norm, TF_name==TFList[i,1])
+  overlap_TF_gain <- countOverlaps(  gain, TF_overlap, ignore.strand=TRUE,type="any")
+    overlap_TF_gain <- as.data.frame(overlap_TF_gain)
+ overlap_TF_gain <- subset(overlap_TF_gain, overlap_TF_gain > 0) %>% nrow()
+ 
+overlap_TF_loss <- countOverlaps(lost , TF_overlap,  ignore.strand=TRUE,type="any")
+  overlap_TF_loss <- as.data.frame(overlap_TF_loss)
+ overlap_TF_loss <- subset(overlap_TF_loss, overlap_TF_loss > 0) %>% nrow() 
+ 
+ TFList[i,2] <- overlap_TF_gain
+ TFList[i,3] <- overlap_TF_loss
+ 
+ TFList[i,4]<-phyper((overlap_TF_gain)-1,length(gain),length(lost),overlap_TF_gain+overlap_TF_loss, lower.tail = FALSE)
+ 
+  V1 = overlap_TF_gain
+  V2 = length(gain)-overlap_TF_gain
+  V3 = overlap_TF_loss
+  V4 = length(lost)-overlap_TF_loss
+     
+TFList[i,5] <- log2((V1/(V1+V3))/(V2/(V2+V4)))
+ 
+ TFList2[i,2] <- V1
+ TFList2[i,3] <- V2
+ TFList2[i,4] <- V3
+ TFList2[i,5] <- V4
+  
+ 
+}
+   TFList$fdr_gain <- p.adjust(TFList[,4], "BH")
+
+   
+gained_TF <- TFList %>% subset(fdr_gain < 0.05)
+
+gained_TF <- select(gained_TF, c("TF_name", "V2","V3","V5","fdr_gain"))
+colnames(gained_TF) <- c("TF_Name","gain_count","not_gained_count", "Enrichment","FDR")
+gained_TF$group <- "gained"
+
+
+gained_TF_tot_bg <-gained_TF
+
+
+gained_TF_tot_bg
+
+
+temp <- TFList
+        
+        colnames(temp)[c(2:6)] <- c("gain_count", "not_gain_count", "P-value_gain","Enrichment_gain","fdr_gain")
+        
+        colnames(temp)[c(2:6)] <- paste0(colnames(temp)[c(2:6)],"_tot_bg")
+        
+TFList_gain_tot_bg  <- temp
+
+TFList2
+
+
+colnames(TFList2)[c(2:dim(TFList2)[2])] <- c(paste0(rep("V", 4),1:4))
+colnames(TFList2)[c(2:dim(TFList2)[2])] <- paste0(colnames(TFList2)[c(2:dim(TFList2)[2])],"_tot_bg_gain")
+
+TFList_gain_tot_bg_merge <- merge(TFList_gain_tot_bg,TFList2)
+
+TFList_gain_tot_bg_merge <- TFList_gain_tot_bg_merge[c(1,4:dim(TFList_gain_tot_bg_merge)[2])]
+
+TFList_gain_tot_bg_merge
+
+```
+
+
+
+### enrichment analysis for correcting the distribution bias
+
+                  TF1 | sum(TF2 | TF3 .....)
+    Gain
+    not gained  
+
+####get the TFList from above analysis
+
+#####we need number of gain and not gained for each TF
+
+```{r}
+#TFList <- aa
+TFList <- select(TFList, c("TF_name","V2","V3"))
+
+TFList2 <- TFList
+for(i in 1:dim(TFList)[1]){
+ 
+  
+  
+  successBG <- sum(TFList$V2)
+  failBG <- sum(TFList$V3)
+  overlap_TF_gain <- TFList[i,2]
+  overlap_TF_loss <-TFList[i,3]
+  
+  
+  TFList[i,4]<-phyper((overlap_TF_gain)-1,successBG,failBG,overlap_TF_gain+overlap_TF_loss, lower.tail = FALSE)
+  
+   V1 = overlap_TF_gain
+   V2 = successBG-overlap_TF_gain
+   V3 = overlap_TF_loss
+   V4 = failBG-overlap_TF_loss
+      
+ TFList[i,5] <- log2((V1/(V1+V3))/(V2/(V2+V4)))
+ 
+  TFList2[i,2] <- V1
+ TFList2[i,3] <- V2
+ TFList2[i,4] <- V3
+ TFList2[i,5] <- V4
+   
+ 
+}
+
+
+ TFList$fdr_gain <- p.adjust(TFList[,4], "BH")
+
+   
+gained_TF <- TFList %>% subset(fdr_gain < 0.05)
+
+
+gained_TF <- select(gained_TF, c("TF_name", "V2","V3","V5","fdr_gain"))
+colnames(gained_TF) <- c("TF_Name","gain_count","not_gained_count", "Enrichment","FDR")
+gained_TF$group <- "gained"
+
+
+        gained_TF_tot_bg_corr_bias <- gained_TF   
+        
+        gained_TF_tot_bg_corr_bias
+        
+        
+        temp <- TFList
+        
+        colnames(temp)[c(2:6)] <- c("gain_count", "not_gain count", "P-value_gain","Enrichment_gain","fdr_gain")
+        
+        colnames(temp)[c(2:6)] <- paste0(colnames(temp)[c(2:6)],"_tot_bg_bias_corrected")
+        
+TFList_gain_tot_bg_bias_corrected  <- temp
+
+TFList2
+
+colnames(TFList2)[c(2:dim(TFList2)[2])] <- c(paste0(rep("V", 4),1:4))
+colnames(TFList2)[c(2:dim(TFList2)[2])] <- paste0(colnames(TFList2)[c(2:dim(TFList2)[2])],"_tot_bg_bias_corrected_gain")
+
+TFList_gain_tot_bg_bias_corrected_merge <- merge(TFList_gain_tot_bg_bias_corrected,TFList2)
+
+TFList_gain_tot_bg_bias_corrected_merge <- TFList_gain_tot_bg_bias_corrected_merge[c(1,4:dim(TFList_gain_tot_bg_bias_corrected_merge)[2])]
+
+TFList_gain_tot_bg_bias_corrected_merge
+
+
+```
+
+
+
+#selecting loss and all others as bg 
+```{r}
+
+#load TF filenormalized to 400 bp from middle
+##hg19 based
+#TF_norm <- fread("TF.binding.sites.extended.range.200bp.from.middle.bed")
+
+#colnames(TF_norm) <- c("chr","start","end","TF_name","score")
+
+#TF_norm <- makeGRangesFromDataFrame(TF_norm, keep.extra.columns=TRUE)
+
+predicted_element <- fread("enhancers/02.enhancer_vs_expression.table.csv")
+
+predicted_element <- unique(predicted_element)
+element_width=1000
+
+
+
+predicted_element$start <- predicted_element$start+ as.integer((predicted_element$end-predicted_element$start)/2) 
+predicted_element$end <- predicted_element$start 
+predicted_element$start <- predicted_element$start - (element_width/2) +1
+predicted_element$end  <- predicted_element$end + (element_width/2)
+
+
+predicted_element<- select(predicted_element, c("chr", "start", "end", "Peak","predicted_gain","predicted_loss"))
+predicted_element <- subset(predicted_element, Peak!="")
+
+gain <- subset(predicted_element, predicted_loss!=T )
+
+lost <- subset(predicted_element, predicted_gain==F & predicted_loss==T)
+
+
+
+
+gain <- makeGRangesFromDataFrame(gain, keep.extra.columns=TRUE)#not lost
+lost <- makeGRangesFromDataFrame(lost, keep.extra.columns=TRUE) #lost
+	
+TFList <- TF_norm %>% as.data.frame() %>%select(TF_name) %>% unique()
+
+TFList2 <- TFList
+
+for(i in 1:dim(TFList)[1]){
+  TF_overlap <- subset(TF_norm, TF_name==TFList[i,1])
+  overlap_TF_gain <- countOverlaps(  gain, TF_overlap, ignore.strand=TRUE,type="any")
+    overlap_TF_gain <- as.data.frame(overlap_TF_gain)
+ overlap_TF_gain <- subset(overlap_TF_gain, overlap_TF_gain > 0) %>% nrow()
+ 
+overlap_TF_loss <- countOverlaps(lost , TF_overlap,  ignore.strand=TRUE,type="any")
+  overlap_TF_loss <- as.data.frame(overlap_TF_loss)
+ overlap_TF_loss <- subset(overlap_TF_loss, overlap_TF_loss > 0) %>% nrow() 
+ 
+ TFList[i,2] <- overlap_TF_gain
+ TFList[i,3] <- overlap_TF_loss
+ 
+ 
+ TFList[i,4]<-phyper((overlap_TF_loss)-1,length(lost),length(gain),overlap_TF_gain+overlap_TF_loss, lower.tail = FALSE)
+ 
+  V1 = overlap_TF_gain
+  V2 = length(gain)-overlap_TF_gain
+  V3 = overlap_TF_loss
+  V4 = length(lost)-overlap_TF_loss
+     
+
+  TFList[i,5] <- -log2((V3/(V1+V3))/(V4/(V2+V4)))
+  
+ TFList2[i,2] <- V3
+ TFList2[i,3] <- V4
+ TFList2[i,4] <- V1
+ TFList2[i,5] <- V2
+}
+  
+   TFList$fdr_lost<- p.adjust(TFList[,4], "BH")
+   
+
+   
+lost_TF <- TFList %>% subset(fdr_lost < 0.05)
+
+lost_TF <- select(lost_TF, c("TF_name", "V2","V3","V5","fdr_lost"))
+colnames(lost_TF) <- c("TF_Name","lost_count","not_lost_count", "Enrichment","FDR")
+lost_TF$group <- "lost"
+
+
+lost_TF_tot_bg <-lost_TF
+
+
+lost_TF_tot_bg
+
+   temp <- TFList[c(1,3,2,4:6)]
+        
+        colnames(temp)[c(2:6)] <- c("loss_count", "not_loss_count", "P-value_loss","Enrichment_loss","fdr_loss")
+        
+        colnames(temp)[c(2:6)] <- paste0(colnames(temp)[c(2:6)],"_tot_bg")
+        
+TFList_loss_tot_bg <- temp
+
+TFList2
+
+
+
+colnames(TFList2)[c(2:dim(TFList2)[2])] <- c(paste0(rep("V", 4),1:4))
+colnames(TFList2)[c(2:dim(TFList2)[2])] <- paste0(colnames(TFList2)[c(2:dim(TFList2)[2])],"_tot_bg_loss")
+
+TFList_loss_tot_bg_merge <- merge(TFList_loss_tot_bg,TFList2)
+
+TFList_loss_tot_bg_merge <- TFList_loss_tot_bg_merge[c(1,4:dim(TFList_loss_tot_bg_merge)[2])]
+
+TFList_loss_tot_bg_merge
+
+
+```
+
+#merge total bg together
+```{r}
+
+lost_TF_tot_bg_temp <- lost_TF_tot_bg
+gained_TF_tot_bg_temp <- gained_TF_tot_bg
+
+colnames(gained_TF_tot_bg_temp)[c(2,3)] <- c("changed_count", "not_changed_count")
+colnames(lost_TF_tot_bg_temp)[c(2,3)] <- c("changed_count", "not_changed_count")
+
+final_tot_bg <- rbind(gained_TF_tot_bg_temp, lost_TF_tot_bg_temp)
+
+final_tot_bg
+
+```
+
+
+
+## enrichment analysis for correcting the distribution bias
+
+            TF1 | sum(TF2 | TF3 .....)
+    lost
+    not lost  
+
+####get the TFList from above analysis
+
+#####we need number of lost and not lost for each TF
+
+```{r}
+#TFList <- aa
+TFList <- select(TFList, c("TF_name","V2","V3"))
+TFList2 <- TFList
+for(i in 1:dim(TFList)[1]){
+ 
+  
+  
+  successBG <- sum(TFList$V2)
+  failBG <- sum(TFList$V3)
+  overlap_TF_gain <- TFList[i,2]
+  overlap_TF_loss <-TFList[i,3]
+  
+  
+  TFList[i,4]<-phyper((overlap_TF_loss)-1,failBG,successBG,overlap_TF_gain+overlap_TF_loss, lower.tail = FALSE)
+#  
+ 
+   V1 = overlap_TF_gain
+   V2 = successBG-overlap_TF_gain
+   V3 = overlap_TF_loss
+   V4 = failBG-overlap_TF_loss
+      
+
+   TFList[i,5] <- -log2((V3/(V1+V3))/(V4/(V2+V4)))
+
+ TFList2[i,2] <- V3
+ TFList2[i,3] <- V4
+ TFList2[i,4] <- V1
+ TFList2[i,5] <- V2
+}
+
+
+ 
+   TFList$fdr_loss <- p.adjust(TFList[,4], "BH")
+   
+
+lost_TF <- TFList %>% subset(fdr_loss < 0.05)
+
+
+lost_TF <- select(lost_TF, c("TF_name", "V2","V3","V5","fdr_loss"))
+colnames(lost_TF) <- c("TF_Name", "lost_count","not_lost_count","Enrichment","FDR")
+lost_TF$group <- "lost"
+#TF_norm %>% subset( overlap_TF_gain > 0) %>% length
+
+
+lost_TF_tot_bg_corr_bias <- lost_TF   
+        
+        lost_TF_tot_bg_corr_bias  
+        
+        
+         temp <- TFList[c(1,3,2,4:6)]
+        
+        colnames(temp)[c(2:6)] <- c("loss_count", "not_loss_count", "P-value_loss","Enrichment_loss","fdr_loss")
+        
+        colnames(temp)[c(2:6)] <- paste0(colnames(temp)[c(2:6)],"_tot_bg_bias_corrected")
+        
+TFList_loss_tot_bg_bias_corrected  <- temp
+
+TFList2
+
+colnames(TFList2)[c(2:dim(TFList2)[2])] <- c(paste0(rep("V", 4),1:4))
+colnames(TFList2)[c(2:dim(TFList2)[2])] <- paste0(colnames(TFList2)[c(2:dim(TFList2)[2])],"_tot_bg_bias_corrected_loss")
+
+TFList_loss_tot_bg_bias_corrected_merge <- merge(TFList_loss_tot_bg_bias_corrected,TFList2)
+
+TFList_loss_tot_bg_bias_corrected_merge <- TFList_loss_tot_bg_bias_corrected_merge[c(1,4:dim(TFList_loss_tot_bg_bias_corrected_merge)[2])]
+
+TFList_loss_tot_bg_bias_corrected_merge
+```
+
+
+```{r}
+
+#merge total bg together
+
+
+gained_TF_tot_bg_corr_bias_temp <- gained_TF_tot_bg_corr_bias
+lost_TF_tot_bg_corr_bias_temp <- lost_TF_tot_bg_corr_bias
+
+colnames(gained_TF_tot_bg_corr_bias_temp)[c(2,3)] <- c("changed_count", "not_changed_count")
+colnames(lost_TF_tot_bg_corr_bias_temp)[c(2,3)] <- c("changed_count", "not_changed_count")
+
+final_tot_bgcorr_bias <- rbind(gained_TF_tot_bg_corr_bias_temp, lost_TF_tot_bg_corr_bias_temp)
+
+
+final_tot_bgcorr_bias
+
+```
+
+
+####merge all the four test results
+
+```{r}
+#df_final_gain_loss_bg
+#df_final_gain_loss_bg_corr_bias
+#final_tot_bgcorr_bias
+#final_tot_bg
+
+#meke all=T kiyala thibbe man mekuwa mathaka ne eka mokada thiyenne kiyala
+#eka thibbama only fdr filtered ewa witharak neme enne kiyala mata passe hithunnu nisa man eka makuwa
+#eththatama eka mulin demme ey mathaka ne den
+
+final_TF_all_4_test <- merge(df_final_gain_loss_bg, df_final_gain_loss_bg_corr_bias, by="TF_Name", suffixes=c("_diff_bg","_diff_bg_bias_corrected"))
+
+final_TF_all_4_test_temp <- merge(final_tot_bg,final_tot_bgcorr_bias, by="TF_Name", suffixes=c("_tot_bg","_tot_bg_bias_corrected"))
+
+
+final_TF_all_4_test <- merge(final_TF_all_4_test, final_TF_all_4_test_temp, by="TF_Name")
+
+final_TF_all_4_test
+
+write.csv(final_TF_all_4_test, file="enhancers/Enhancer_TF_analysis_all4_tests.csv")
+```
+
+
+####Create heatmap for TF enrichment
+```{r, fig.height=10, fig.width=5}
+
+
+df_tf <- read.csv( file="Enhancer_TF_analysis_all4_tests.csv")
+
+df_tf$X <- NULL
+df_tf <- subset(df_tf, !is.na(group_tot_bg))
+
+df_tf <- df_tf[order(-df_tf$Enrichment_diff_bg),]
+
+df_tf_enrichment <- select(df_tf, c(1,4,9,14,19))
+
+df_tf_enrichment <- melt(df_tf_enrichment, id=c(1))
+
+df_tf_fdr <- select(df_tf, c(1,5,10,15,20))
+
+df_tf_fdr<- melt(df_tf_fdr, id=c(1))
+
+d.matrix <- data.frame(df_tf_enrichment,df_tf_fdr)
+
+d.matrix <- d.matrix[c(1:3,6)]
+
+colnames(d.matrix) <- c("TF_Name", "group", "Enrichment", "fdr")
+
+d.matrix$Enrichment[is.na(d.matrix$Enrichment)] <- 0
+
+#convert negative sign back to positive # enrichment 
+d.matrix$Enrichment[d.matrix$Enrichment < 0] <- d.matrix$Enrichment[d.matrix$Enrichment < 0] * -1
+
+
+length_TF <- d.matrix %>% select(TF_Name) %>% unique() 
+
+figure_5b_tf_order <- length_TF
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 5/fig5_a_TF_enhancers.pdf", height=10,width=4) 
+ ggplot(d.matrix, size = d.matrix$Enrichment, aes(x = d.matrix$group, size = d.matrix$Enrichment ,
+ y= factor(d.matrix$TF_Name , levels = rev(as.character(length_TF$TF_Name))))) +
+  geom_point(aes(colour =squish(log10(d.matrix$fdr),c(-20,0)))) +
+  scale_colour_gradient("log10(FDR of\nenrichment)", low = "red",  high="yellow") +
+  scale_size("log2 FD\nof enrichment",range = c(0, 10), breaks =c(seq(0,1.5,by = 0.5)))+
+  guides(size = guide_legend(override.aes = list(colour = "black")))+
+ # guides(size = guide_legend(override.aes = list(size=c(0,0.5))))+
+ # theme_bw()+
+   theme_minimal()+
+  theme(legend.key.size = unit(1.5, 'lines'), text = element_text(size=15), axis.text.x=element_text(colour="white"),axis.text = element_text( size=14),axis.title.x=element_blank(),axis.title.y=element_blank(),legend.position="left", 
+						panel.background = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.length=unit(.25, "cm"), axis.ticks.x=element_blank())
+
+#dev.off()
+#getwd()
+
+```
+
+
+
+
+Combine data of unequal row length avoiding repetition or errors by filling with NAs. In contrast to classical cbind, cbind.na can be used to combine data such as
+
+cbind.na(1:10, 1:3)
+http://www.dr-spiess.de/Rscripts.html
+
+```{r}
+cbind.na <- function (..., deparse.level = 1) 
+{
+    na <- nargs() - (!missing(deparse.level))    
+    deparse.level <- as.integer(deparse.level)
+    stopifnot(0 <= deparse.level, deparse.level <= 2)
+    argl <- list(...)   
+    while (na > 0 && is.null(argl[[na]])) {
+        argl <- argl[-na]
+        na <- na - 1
+    }
+    if (na == 0) 
+        return(NULL)
+    if (na == 1) {         
+        if (isS4(..1)) 
+            return(cbind2(..1))
+        else return(matrix(...))  ##.Internal(cbind(deparse.level, ...)))
+    }
+    if (deparse.level) {       
+        symarg <- as.list(sys.call()[-1L])[1L:na]
+        Nms <- function(i) {
+            if (is.null(r <- names(symarg[i])) || r == "") {
+                if (is.symbol(r <- symarg[[i]]) || deparse.level == 
+                  2) 
+                  deparse(r)
+            }
+            else r
+        }
+    }   
+    ## deactivated, otherwise no fill in with two arguments
+    if (na == 0) {
+        r <- argl[[2]]
+        fix.na <- FALSE
+    }
+    else {
+        nrs <- unname(lapply(argl, nrow))
+        iV <- sapply(nrs, is.null)
+        fix.na <- identical(nrs[(na - 1):na], list(NULL, NULL))
+        ## deactivated, otherwise data will be recycled
+        #if (fix.na) {
+        #    nr <- max(if (all(iV)) sapply(argl, length) else unlist(nrs[!iV]))
+        #    argl[[na]] <- cbind(rep(argl[[na]], length.out = nr), 
+        #        deparse.level = 0)
+        #}       
+        if (deparse.level) {
+            if (fix.na) 
+                fix.na <- !is.null(Nna <- Nms(na))
+            if (!is.null(nmi <- names(argl))) 
+                iV <- iV & (nmi == "")
+            ii <- if (fix.na) 
+                2:(na - 1)
+            else 2:na
+            if (any(iV[ii])) {
+                for (i in ii[iV[ii]]) if (!is.null(nmi <- Nms(i))) 
+                  names(argl)[i] <- nmi
+            }
+        }
+           
+        ## filling with NA's to maximum occuring nrows
+        nRow <- as.numeric(sapply(argl, function(x) NROW(x)))
+        maxRow <- max(nRow, na.rm = TRUE)  
+        argl <- lapply(argl, function(x)  if (is.null(nrow(x))) c(x, rep(NA, maxRow - length(x)))
+                                          else rbind.na(x, matrix(, maxRow - nrow(x), ncol(x))))
+        r <- do.call(cbind, c(argl[-1L], list(deparse.level = deparse.level)))
+    }
+    d2 <- dim(r)
+    r <- cbind2(argl[[1]], r)
+    if (deparse.level == 0) 
+        return(r)
+    ism1 <- !is.null(d1 <- dim(..1)) && length(d1) == 2L
+    ism2 <- !is.null(d2) && length(d2) == 2L && !fix.na
+    if (ism1 && ism2) 
+        return(r)
+    Ncol <- function(x) {
+        d <- dim(x)
+        if (length(d) == 2L) 
+            d[2L]
+        else as.integer(length(x) > 0L)
+    }
+    nn1 <- !is.null(N1 <- if ((l1 <- Ncol(..1)) && !ism1) Nms(1))
+    nn2 <- !is.null(N2 <- if (na == 2 && Ncol(..2) && !ism2) Nms(2))
+    if (nn1 || nn2 || fix.na) {
+        if (is.null(colnames(r))) 
+            colnames(r) <- rep.int("", ncol(r))
+        setN <- function(i, nams) colnames(r)[i] <<- if (is.null(nams)) 
+            ""
+        else nams
+        if (nn1) 
+            setN(1, N1)
+        if (nn2) 
+            setN(1 + l1, N2)
+        if (fix.na) 
+            setN(ncol(r), Nna)
+    }
+    r
+}
+
+rbind.na <- function (..., deparse.level = 1) 
+{
+    na <- nargs() - (!missing(deparse.level))
+    deparse.level <- as.integer(deparse.level)
+    stopifnot(0 <= deparse.level, deparse.level <= 2)
+    argl <- list(...)
+    while (na > 0 && is.null(argl[[na]])) {
+        argl <- argl[-na]
+        na <- na - 1
+    }    
+    if (na == 0) 
+        return(NULL)
+    if (na == 1) {
+        if (isS4(..1)) 
+            return(rbind2(..1))
+        else return(matrix(..., nrow = 1)) ##.Internal(rbind(deparse.level, ...)))
+    }
+    if (deparse.level) {
+        symarg <- as.list(sys.call()[-1L])[1L:na]
+        Nms <- function(i) {
+            if (is.null(r <- names(symarg[i])) || r == "") {
+                if (is.symbol(r <- symarg[[i]]) || deparse.level == 
+                  2) 
+                  deparse(r)
+            }
+            else r
+        }
+    }
+    
+    ## deactivated, otherwise no fill in with two arguments
+    if (na == 0) {
+        r <- argl[[2]]
+        fix.na <- FALSE
+    }
+    else {
+        nrs <- unname(lapply(argl, ncol))
+        iV <- sapply(nrs, is.null)
+        fix.na <- identical(nrs[(na - 1):na], list(NULL, NULL))
+        ## deactivated, otherwise data will be recycled
+        #if (fix.na) {
+        #    nr <- max(if (all(iV)) sapply(argl, length) else unlist(nrs[!iV]))
+        #    argl[[na]] <- rbind(rep(argl[[na]], length.out = nr), 
+        #        deparse.level = 0)
+        #}
+        if (deparse.level) {
+            if (fix.na) 
+                fix.na <- !is.null(Nna <- Nms(na))
+            if (!is.null(nmi <- names(argl))) 
+                iV <- iV & (nmi == "")
+            ii <- if (fix.na) 
+                2:(na - 1)
+            else 2:na
+            if (any(iV[ii])) {
+                for (i in ii[iV[ii]]) if (!is.null(nmi <- Nms(i))) 
+                  names(argl)[i] <- nmi
+            }
+        }
+        
+        ## filling with NA's to maximum occuring ncols
+        nCol <- as.numeric(sapply(argl, function(x) if (is.null(ncol(x))) length(x)
+                                                    else ncol(x)))
+        maxCol <- max(nCol, na.rm = TRUE)  
+        argl <- lapply(argl, function(x)  if (is.null(ncol(x))) c(x, rep(NA, maxCol - length(x)))
+                                          else cbind(x, matrix(, nrow(x), maxCol - ncol(x))))  
+        
+        ## create a common name vector from the
+        ## column names of all 'argl' items
+        namesVEC <- rep(NA, maxCol)  
+        for (i in 1:length(argl)) {
+          CN <- colnames(argl[[i]])          
+          m <- !(CN %in% namesVEC)
+          namesVEC[m] <- CN[m]          
+        }  
+        
+        ## make all column names from common 'namesVEC'
+        for (j in 1:length(argl)) {    
+          if (!is.null(ncol(argl[[j]]))) colnames(argl[[j]]) <- namesVEC
+        }
+        
+        r <- do.call(rbind, c(argl[-1L], list(deparse.level = deparse.level)))        
+    }
+    
+    d2 <- dim(r)
+    
+    ## make all column names from common 'namesVEC'
+    colnames(r) <- colnames(argl[[1]])
+    
+    r <- rbind2(argl[[1]], r)
+        
+    if (deparse.level == 0) 
+        return(r)
+    ism1 <- !is.null(d1 <- dim(..1)) && length(d1) == 2L
+    ism2 <- !is.null(d2) && length(d2) == 2L && !fix.na
+    if (ism1 && ism2) 
+        return(r)
+    Nrow <- function(x) {
+        d <- dim(x)
+        if (length(d) == 2L) 
+            d[1L]
+        else as.integer(length(x) > 0L)
+    }
+    nn1 <- !is.null(N1 <- if ((l1 <- Nrow(..1)) && !ism1) Nms(1))
+    nn2 <- !is.null(N2 <- if (na == 2 && Nrow(..2) && !ism2) Nms(2))
+    if (nn1 || nn2 || fix.na) {
+        if (is.null(rownames(r))) 
+            rownames(r) <- rep.int("", nrow(r))
+        setN <- function(i, nams) rownames(r)[i] <<- if (is.null(nams)) 
+            ""
+        else nams
+        if (nn1) 
+            setN(1, N1)
+        if (nn2) 
+            setN(1 + l1, N2)
+        if (fix.na) 
+            setN(nrow(r), Nna)
+    }
+    r
+}
+
+
+```
+
+
+Create .gmt file with gained-up regulated genes
+4 grps
+all gain-up & loss-down
+distance -200kb to 400kb
+
+
+```{r}
+
+predicted_element <- fread("02.enhancer_vs_expression.table.csv")
+
+up_gain_all <- subset(predicted_element, gain_model_score > 0.95 & padj_patients_T_vs_N < 0.05)
+
+up_gain_all <- select(up_gain_all, up_gain_all="Gene.name") %>% unique()
+
+up_gain_all <- as.character(up_gain_all$up_gain_all)
+
+down_loss_all <- subset(predicted_element, loss_model_score > 0.95 & padj_patients_T_vs_N < 0.05)
+
+down_loss_all <- select(down_loss_all, down_loss_all="Gene.name") %>% unique() 
+
+down_loss_all <- as.character(down_loss_all$down_loss_all)
+
+
+up_gain_dis <- subset(predicted_element, gain_model_score > 0.95 & padj_patients_T_vs_N < 0.05 & (distance_to_the_gene_TSS_from_centre_of_enhancer < 400000 & distance_to_the_gene_TSS_from_centre_of_enhancer > -200000)  )
+
+up_gain_dis <- select(up_gain_dis, up_gain_dis="Gene.name") %>% unique()
+
+up_gain_dis <- as.character(up_gain_dis$up_gain_dis)
+
+down_loss_dis <- subset(predicted_element, loss_model_score > 0.95 & padj_patients_T_vs_N < 0.05 & (distance_to_the_gene_TSS_from_centre_of_enhancer < 200000 & distance_to_the_gene_TSS_from_centre_of_enhancer > -200000)  )
+
+down_loss_dis <- select(down_loss_dis, down_loss_dis="Gene.name") %>% unique()
+
+down_loss_dis <- as.character(down_loss_dis$down_loss_dis)
+
+#cbind.na uda thiyenawa
+
+df_gmt <- as.data.frame(cbind.na(up_gain_all, down_loss_all, up_gain_dis, down_loss_dis))
+
+
+
+
+write.table(t(df_gmt), file="gained_enh_TF/predicted_enhancer_target_genes_diff_expression_for_gsea.gmt", col.names = F, row.names = T, quote = F, sep = "\t")
+
+```
+
+
+Gained and lost enhancers and gene expression correlation
+
+```{r}
+predicted_element <- fread("02.enhancer_vs_expression.table.csv")
+
+predicted_element <- subset(predicted_element, !is.na(gain_model_score ) & !is.na(log2FoldChange_patients_T_vs_N) )
+
+#sort by abstract distance
+#predicted_element <- predicted_element[order(predicted_element$gain_model_score),]
+#remove duplicates by gene name
+#predicted_element <- predicted_element[!duplicated(predicted_element$Gene.name),]
+
+
+
+x = predicted_element$gain_model_score
+y= predicted_element$log2FoldChange_patients_T_vs_N
+smoothscattergradient( x=x, y=y, file.name=NULL , xlabs="Enhancer Model Score", ylabs="Log2 FC Patients", width=5, height=5, lab.x=0.5, lab.y=10, bin.size=80,bin.width1=0.1,bin.width2=0.1 , my.breaks=c(1,10, 100), up.lab.x=4,up.lab.y=-4.5, down.lab.x=-2.5,down.lab.y=7.5, returnfraction=F)
+
+
+y2 <- transform( y, y = sample(y) )
+
+
+smoothscattergradient( x=x, y=y2$y, file.name=NULL , xlabs="Enhancer Model Score", ylabs="Log2 FC Patients", width=5, height=5, lab.x=0.5, lab.y=10, bin.size=80,bin.width1=0.1,bin.width2=0.1 , my.breaks=c(1,10, 100), up.lab.x=1,up.lab.y=-1, down.lab.x=-1,down.lab.y=1, returnfraction=T)
+```
+
+
+```{r}
+
+lims=c(0,1,-10,10)
+
+
+f1 <- kde2d(x,y, lims=lims,n=500,h=3.9)
+f2 <- kde2d(x,y2$y, lims=lims,n=500,h=3.9)
+
+#f <- kde2d(table$log2FoldChange_VHL_vs_EV_H[filter],table$log2FoldChange_VHL_vs_EV_N[filter],lims=lims,n=500,h=0.6)
+z <- f1$z-f2$z
+z_range <- max(abs(range(z)))
+z[ z < -z_range ] <- -z_range
+z[ z > z_range ] <- z_range
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 4/fig4_enhancer_score_and_log2fc.pdf", height=5,width=7)
+image(f2$x,f2$y,z,zlim=c(-z_range,z_range),col=colorRampPalette(c( "blue", "white","red"))(255))
+#dec.off()
+#abline(h=0,lt=2)
+#abline(v=0,lt=2)
+contour(f1$x, f1$y, z, col = "black", add = F, method = "edge",
+         labcex=1.5)
+#dev.off()
+```
+
+```{r}
+filled.contour(f2$x,f2$y,z,zlim=c(-z_range,z_range),color.palette=colorRampPalette(c("blue","white","red" )),
+               levels = pretty(c(-z_range,z_range), 255), cex.axis = 2.6, cex.lab = 2.8, cex.main=4)
+```
+
+Enhancer TF target genes GSEa analysis bar graph
+
+```{r, fig.height=8, fig.width=6}
+gain_up <- fread("gained_enh_TF/gained_enh_TF.patients_.GseaPreranked.1552793757961/gsea_report_for_na_pos_1552793757961.xls")
+
+loss_down <- fread("lost_enh_TF/lost_enh_TF.Gsea_patients_Preranked.1551210549785/gsea_report_for_na_neg_1551210549785.xls")
+
+df_rbind <- rbind(gain_up, loss_down)
+
+write.csv(df_rbind, file="patients_tf_target_genes_gsea_merge.csv", row.names = F)
+
+
+pdf(file="fig5_b_TF_enhancers_gsea_order_by_tfs.pdf", height=6,width=4) 
+ggplot(df_rbind, aes(x = factor(df_rbind$NAME, levels = as.character(rev(figure_5b_tf_order$TF_Name))), y = df_rbind$NES, fill=(df_rbind$"FDR q-val"))) +
+  #guides(fill=guide_legend(title="log P Value"))+
+  geom_bar(stat = "identity", width = 0.5)+
+  theme_bw()+
+  scale_fill_gradient(low="#800033",high="#ff80b3", name = "FDR")+
+    theme(legend.key.size = unit(1.5, 'lines'), axis.text.x = element_text( size=14),text = element_text(size=16), axis.ticks.y=element_blank(),axis.line.y=element_blank(),legend.position="right",panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  coord_flip()
+dev.off()
+
+```
+
+# Write the updated table and the environment variables, and show the session info
+```{r}
+write.table( table, "02.enhancer_vs_expression.table.csv", sep=",", quote=T, row.names=F )
+save(list=ls(),file="02.enhancer_vs_expression.table.RData")
+
+sessionInfo()
+```

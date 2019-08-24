@@ -1,0 +1,273 @@
+---
+title: Relationship between enhancer methylation, promoter methylation, and expression
+  in ccRCC
+author:
+- name: Hamed S. Najafabadi
+- name: Pubudu Nawarathna
+#date: "`r format(Sys.Date(), "%Y-%B-%d")`"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    df_print: paged
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Preparation
+Load the files and libraries:
+```{r}
+
+library(ggplot2)
+library(ggforce)
+library(gridExtra)
+library(scales)
+library(randomForest)
+library(IHW)
+library(pROC)
+library(fields)
+library(matlab)
+library(stringr)
+library(MASS)
+
+setwd("../../files")
+# Load the environment from the previous step
+load("01.gain_loss_enhancers.table.RData")
+```
+
+# How does gain/loss of enhancers determine gene expression changes in tumor vs. normal?
+Here, we will use the gain/loss score of enhancers together with machine learning to explore the relationship with gene expression changes. The predictors are the gain/loss score and the enhancer distance to the gene. The target is the status of the gene (significant up-regulation, significant down-regulation, or no change)
+
+```{r}
+# create a data frame of the covariates, including the target for prediction
+covariates <- data.frame(
+  target = as.factor( (table$padj_patients_T_vs_N < 0.01)*1 * sign(table$log2FoldChange_patients_T_vs_N) ),
+  enhancer_score = table$gain_model_score,
+  distance = table$distance_to_the_gene_TSS_from_centre_of_enhancer )
+
+# train the model using default parameters of the random forest function
+TN_gene_expression_model <- randomForest( target ~ ., data=covariates, na.action = na.omit )
+# predict gain/loss using this model
+predicted <- predict(TN_gene_expression_model, covariates, type="prob")
+colnames(predicted)[1:3] <- c("expression_down_model_score","expression_nochange_model_score","expression_up_model_score")
+table <- cbind( table, predicted )
+table$predicted_upregulated <- table$expression_up_model_score > 0.7
+table$predicted_downregulated <- table$expression_down_model_score > 0.7
+table$predicted_nochange <- table$expression_nochange_model_score > 0.7
+
+
+summary(table$predicted_upregulated)
+summary(table$predicted_downregulated)
+summary(table$predicted_nochange)
+
+```
+
+
+####supplemenatary figure S4B
+Let's perform cross-validation to examine the performance (leave-one-chromosome-out):
+```{r}
+cv.result <- cv.rf(target ~ .,covariates, id=table$chr) # use only the non-redundant enhancers (the ones marked with TRUE), and use "chr" as the id for cross-validation
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/supfig3/supfig3a_enhancers__genes_roc.pdf", height=5,width=8)
+par(mfrow=c(1,2))
+proc <- roc( (cv.result[,1]=="1"), cv.result[,ncol(cv.result)] ) # the first column of cv.result is the target, and the last column is the predicted probability of being up-regulated
+cutoff <- min( which(proc$threshold > 0.7) )
+print(paste0("At 0.7 cutoff, the sensitivity and specificity for predicting up-regulated genes is ", round(proc$sensitivities[cutoff],2), " and ", round(proc$specificities[cutoff],2), ", respectively."))
+plot(proc,main=str_wrap("Predicting up-regulated genes",20))
+#lines( proc$specificities, proc$thresholds, lty=2 )
+
+proc <- roc( (cv.result[,1]=="-1"), cv.result[,ncol(cv.result)-2] ) # the first column of cv.result is the target, and the last column is the predicted probability of being down-regulated
+cutoff <- min( which(proc$threshold > 0.7) )
+print(paste0("At 0.7 cutoff, the sensitivity and specificity for predicting down-regulated genes is ", round(proc$sensitivities[cutoff],2), " and ", round(proc$specificities[cutoff],2), ", respectively."))
+plot(proc,main=str_wrap("Predicting down-regulated genes",20))
+#lines( proc$specificities, proc$thresholds, lty=2 )
+#dev.off()
+#[1] "At 0.7 cutoff, the sensitivity and specificity for predicting up-regulated genes is 0.5 and 0.97, respectively."
+#[1] "At 0.7 cutoff, the sensitivity and specificity for predicting down-regulated genes is 0.32 and 0.99, respectively."
+
+```
+
+
+```{r}
+proc
+```
+
+#calculate ROC area
+
+```{r}
+library(verification)
+ roc.area( (cv.result[,1]=="1"), cv.result[,ncol(cv.result)] ) 
+ 
+ roc.area( (cv.result[,1]=="-1"), cv.result[,ncol(cv.result)-2] )
+```
+
+The classifier seems to work really well! It is important to note that in reality we are not predicting the up-/down-regulated genes, but instead we are predicted whether an enhancer is associated with an up-/down-regulated gene. The reason these are two different tasks is that each gene can be associated with multiple enhancers, and our unit of prediction is the enhancer itself.
+
+
+#Figure 4
+## What are the inner workings of this classifier?
+
+What is the relationship between enhancer state and gene expression?
+```{r}
+
+
+resolution <- 30
+dist_range <- 5e5
+positive <- covariates[ which(predicted[,3]>0.7) , ]
+negative <- covariates[ which(predicted[,3]<0.7) , ]
+lims=c(-dist_range,dist_range,-0.05,1.05)
+f1 <- kde2d(positive$distance,positive$enhancer_score,lims=lims,n=500,h=c(dist_range*2/resolution,1/resolution))
+f2 <- kde2d(negative$distance,negative$enhancer_score,lims=lims,n=500,h=c(dist_range*2/resolution,1/resolution))
+z <- f1$z-f2$z
+#z <- log10( (f1$z+mean(f1$z)*10)/(f2$z+mean(f2$z)*10) )
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 4/fig4_b_enhancer_up_gene.pdf", height=5,width=8)
+z_range <- max(abs(range(z)))
+z[ z < -z_range ] <- -z_range
+z[ z > z_range ] <- z_range
+image(f2$x,f2$y,z,zlim=c(-z_range,z_range),col=colorRampPalette(c("blue", "white","red"))(100),
+      xlab="Distance from TSS", ylab="Enhancer gain score", main="Predicted up-regulation")
+#dev.off()
+
+
+
+filled.contour(f2$x,f2$y,z,zlim=c(-z_range,z_range),color.palette=colorRampPalette(c("blue","white","red" )),
+               levels = pretty(c(-z_range,z_range), 100), cex.axis = 2.6, cex.lab = 2.8, cex.main=4)
+
+resolution <- 30
+dist_range <- 5e5
+positive <- covariates[ which(predicted[,1]>0.7) , ]
+negative <- covariates[ which(predicted[,1]<0.7) , ]
+f1 <- kde2d(positive$distance,positive$enhancer_score,lims=lims,n=500,h=c(dist_range*2/resolution,1/resolution))
+f2 <- kde2d(negative$distance,negative$enhancer_score,lims=lims,n=500,h=c(dist_range*2/resolution,1/resolution))
+z <- f1$z-f2$z
+
+z_range <- max(abs(range(z)))
+z[ z < -z_range ] <- -z_range
+z[ z > z_range ] <- z_range
+
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 4/fig4_c_enhancer_down_gene.pdf", height=5,width=8)
+image(f2$x,f2$y,z,zlim=c(-z_range,z_range),col=colorRampPalette(c("blue", "white","red"))(100),
+      xlab="Distance from TSS", ylab="Enhancer gain score", main="Predicted down-regulation")
+#dev.off()
+
+
+resolution <- 30
+dist_range <- 5e5
+positive <- covariates[ which(predicted[,2]>0.7) , ]
+negative <- covariates[ which(predicted[,2]<0.7) , ]
+f1 <- kde2d(positive$distance,positive$enhancer_score,lims=lims,n=500,h=c(dist_range*2/resolution,1/resolution))
+f2 <- kde2d(negative$distance,negative$enhancer_score,lims=lims,n=500,h=c(dist_range*2/resolution,1/resolution))
+z <- f1$z-f2$z
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 4/fig4_d_enhancer_notchange_gene.pdf", height=5,width=8)
+z_range <- max(abs(range(z)))
+z[ z < -z_range ] <- -z_range
+z[ z > z_range ] <- z_range
+image(f2$x,f2$y,z,zlim=c(-z_range,z_range),col=colorRampPalette(c("blue", "white","red"))(100),
+      xlab="Distance from TSS", ylab="Enhancer gain score", main="Predicted no-change")
+#dev.off()
+
+
+filled.contour(f2$x,f2$y,z,zlim=c(-z_range,z_range),color.palette=colorRampPalette(c("blue","white","red" )),
+               levels = pretty(c(-z_range,z_range), 100), cex.axis = 2.6, cex.lab = 2.8, cex.main=4)
+```
+
+
+# What is the relationship between epigenetic modulation of gene expression in ccRCC and VHL-mediated changes in gene-expression?
+
+Let's look at the enhancers that are predicted to be associated with up- or down-regulated genes, and see whether they are overall associated with VHL-mediated up-/down-regulated genes
+```{r, fig.height=6, fig.width=7}
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 6/fig6_c_vhl_h_and_vhl_h_enrichment.pdf", height=5,width=6)
+VHL_H <- as.factor( (table$padj_VHL_vs_EV_H < 0.01)*1 * sign(table$log2FoldChange_VHL_vs_EV_H) )
+VHL_N <- as.factor( (table$padj_VHL_vs_EV_N < 0.01)*1 * sign(table$log2FoldChange_VHL_vs_EV_N) )
+
+hypo.results <- enrichment2D(
+  VHL_H,
+  VHL_N,
+  table$predicted_upregulated | table$predicted_downregulated,
+  table$predicted_upregulated,
+  str_wrap("VHL status, hypoxia",width=30),
+  str_wrap("VHL status, normaxia",width=30),
+  logOddsLimit = 0.1 )
+
+hypo.results$plot + ggtitle("Enrichment of enhancer-upregulated genes")
+#dev.off()
+
+```
+
+This graph clearly shows that genes that are down-regulated by VHL both in hypoxia and normaxia are most highly enriched for enhancers that are gained in tumor (more accurately, for genes that are predicted to be up-regulated in tumor because of a nearby gained enhancer). These are "hypoxia-independent VHL-repressed genes". Interestingly, genes that are down-regulated by VHL in normaxia, but not in hypoxia are also enriched, suggesting that hypoxia-dependent VHL repression also plays a role in shaping tumor expression. However, it is important to note that only a fraction of gained enhancers are in these two categories, and the large majority of gained enhancers are not affected by VHL:
+
+```{r}
+cat( paste0( "The fraction of enhancer-mediated gene up-regulation that is recaptured by VHL is ", round( sum(VHL_N=="-1" & table$predicted_upregulated, na.rm=T)/sum(table$predicted_upregulated, na.rm=T), digits = 2 ), "\n" ) )
+```
+
+#Figure 5
+```{r}
+
+lims=c(-1,1,-1,1)
+filter <- !is.na(table$log2FoldChange_VHL_vs_EV_H) & !is.na(table$log2FoldChange_VHL_vs_EV_N)
+positive <- table[ which(table$predicted_upregulated & filter), ]
+negative <- table[ which(table$predicted_downregulated & filter), ]
+f1 <- kde2d(positive$log2FoldChange_VHL_vs_EV_H,positive$log2FoldChange_VHL_vs_EV_N,lims=lims,n=500,h=0.6)
+f2 <- kde2d(negative$log2FoldChange_VHL_vs_EV_H,negative$log2FoldChange_VHL_vs_EV_N,lims=lims,n=500,h=0.6)
+f <- kde2d(table$log2FoldChange_VHL_vs_EV_H[filter],table$log2FoldChange_VHL_vs_EV_N[filter],lims=lims,n=500,h=0.6)
+z <- f1$z-f2$z
+
+z_range <- max(abs(range(z)))
+z[ z < -z_range ] <- -z_range
+z[ z > z_range ] <- z_range
+
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 6/fig6_c_vhl_h_and_vhl_h_kde2d.pdf", height=5,width=6)
+image(f2$x,f2$y,z,zlim=c(-z_range,z_range),col=colorRampPalette(c("blue", "white","red"))(255))
+#dev.off()
+
+#abline(h=0,lt=2)
+#abline(v=0,lt=2)
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 6/fig6_c_vhl_h_and_vhl_h_kde2d_contour.pdf", height=5,width=6)
+contour(f$x, f$x, f$z, col = "black", add = F, method = "edge",
+        vfont = c("sans serif", "plain"), labcex=1)
+#dev.off()
+
+```
+
+```{r}
+dim(z)
+
+```
+
+
+```{r}
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 6/fig6_c_vhl_h_and_vhl_h_enrichment_kde2d.pdf", height=5,width=6)
+
+filled.contour(f2$x,f2$y,z,zlim=c(-z_range,z_range),color.palette=colorRampPalette(c("blue","white","red" )),
+               levels = pretty(c(-z_range,z_range), 50), cex.axis = 2.6, cex.lab = 2.8, cex.main=4)
+contour(f2$x, f2$x, z, col = "pink", add = TRUE, method = "edge",
+        vfont = c("sans serif", "plain"))
+
+#dev.off()
+
+```
+
+Write the list of these genes and their associated enhancers:
+```{r}
+
+write.table( table[ which(
+    VHL_N=="-0" &
+    VHL_H=="-1" &
+    table$predicted_upregulated &
+    table$predicted_gain &
+    table$padj_patients_T_vs_N < 0.01 &
+    table$log2FoldChange_patients_T_vs_N > 0),],
+    file="02.VHL_suppressed.hypoxia_independent.enhancer_mediated_tumor_upregulation.csv",
+    quote=T, row.names = F, sep="," )
+
+```
+
+
+
+
+# Write the updated table and the environment variables, and show the session info
+```{r}
+write.table( table, "02.enhancer_vs_expression.table.csv", sep=",", quote=T, row.names=F )
+save(list=ls(),file="02.enhancer_vs_expression.table.RData")
+
+sessionInfo()
+```

@@ -1,0 +1,350 @@
+---
+title: "R Notebook"
+author: "Pubudu Nawarathna"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+#Fig 1E
+
+```{r}
+
+
+
+	##################################################################################
+	#create average dhs signals for selected enhancers using bwtool
+	#/home/pubudu/projects/rrg-hsn/utilities/bwtool
+#	module load gcc/5.4.0 r-bundle-bioconductor/3.4
+
+#	R
+
+#convert enhancer file to GRCh37
+	library(dplyr)
+library(data.table)
+library(stringi)
+library(GenomicRanges)
+library(rtracklayer)
+
+
+chain <- import.chain("hg38ToHg19.over.chain")
+
+a <- fread("cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension_normalized.bed")
+
+###if it has 5 columns select 4 using below
+a <- a %>% select(c("V1","V2","V3","V4"))
+
+#a$ID  <- paste0("peak",1:length(rownames(a)))
+colnames(a) <- c("chr","start","end","peak")
+#a$hg38 <- paste(a$chr, a$start,a$end, a$total, a$total_meth, sep="_")
+df<- makeGRangesFromDataFrame(a, keep.extra.columns=TRUE)
+
+     tx_hg19 <- liftOver(df, chain) %>% as.data.frame
+	 tx_hg19 <- select(tx_hg19, c("seqnames","start","end","peak"))
+
+	# write.table(tx_hg19, file="merge_N_H3K27ac_and_H3K4me1_all_samples_with_id_hg19.bed", sep="\t", col.names=F, row.names=F, quote=F)
+	 write.table(tx_hg19, file="cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc37_remove_gene_body_and_10kb_extension_normalized.bed", sep="\t", col.names=F, row.names=F, quote=F)
+```
+
+
+Download wigToBigWig according to your platform 
+http://hgdownload.cse.ucsc.edu/admin/exe/
+
+Download wig DHS files for
+GSM1027337
+GSM1027338
+GSM1027346
+GSM102734
+
+from 
+https://www.ncbi.nlm.nih.gov/geo/roadmap/epigenomics/?display=50&sample=kidney%2C%20fetal&sort=experiment
+
+
+
+```{bash}
+
+#get chromosome sizes (hg19)
+wget http://hgdownload.cse.ucsc.edu/goldenPath/hg19/bigZips/hg19.chrom.sizes
+	#convert wig to bigwig
+
+#/home/pubudu/projects/rrg-hsn/utilities/wigtobigwig/
+	./wigToBigWig GSM1027337_UW.Fetal_Kidney_Right.ChromatinAccessibility.H-24582.DNase.DS20951.wig hg19.chrom.sizes GSM1027337_UW.Fetal_Kidney_Right.ChromatinAccessibility.H-24582.DNase.DS20951.bw
+
+	./wigToBigWig GSM1027338_UW.Fetal_Kidney_Left.ChromatinAccessibility.H-24582.DNase.DS20953.wig hg19.chrom.sizes GSM1027338_UW.Fetal_Kidney_Left.ChromatinAccessibility.H-24582.DNase.DS20953.bw
+
+	./wigToBigWig GSM1027346_UW.Fetal_Kidney_Right.ChromatinAccessibility.H-24626.DNase.DS21340.wig hg19.chrom.sizes GSM1027346_UW.Fetal_Kidney_Right.ChromatinAccessibility.H-24626.DNase.DS21340.bw
+
+	./wigToBigWig GSM1027347_UW.Fetal_Kidney_Left.ChromatinAccessibility.H-24626.DNase.DS21344.wig hg19.chrom.sizes GSM1027347_UW.Fetal_Kidney_Left.ChromatinAccessibility.H-24626.DNase.DS21344.bw
+
+	###################################
+
+```
+Install bwtool 1.0 from https://github.com/CRG-Barcelona/bwtool/wiki
+
+
+```{bash}
+
+# produce plot data as averages surrounding given DHS regions
+   seen in the bigWig
+	./bwtool aggregate 5000:5000  cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc37_remove_gene_body_and_10kb_extension_normalized.bed GSM1027337_UW.Fetal_Kidney_Right.ChromatinAccessibility.H-24582.DNase.DS20951.bw GSM1027337_UW.Fetal_Kidney_Right_all_enh_extended.grc37_remove_gene_body_and_10kb_extension_normalized_bwt_agg.txt -expanded
+
+
+ ./bwtool aggregate 5000:5000 cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc37_remove_gene_body_and_10kb_extension_normalized.bed GSM1027338_UW.Fetal_Kidney_Left.ChromatinAccessibility.H-24582.DNase.DS20953.bw GSM1027337_UW.Fetal_Kidney_Left_all_enh_extended.grc37_remove_gene_body_and_10kb_extension_normalized_bwt_agg.txt -expanded
+
+
+	./bwtool aggregate 5000:5000 cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc37_remove_gene_body_and_10kb_extension_normalized.bed GSM1027346_UW.Fetal_Kidney_Right.ChromatinAccessibility.H-24626.DNase.DS21340.bw GSM1027346_UW.Fetal_Kidney_right_all_enh_extended.grc37_remove_gene_body_and_10kb_extension_normalized_bwt_agg.txt -expanded
+
+
+	./bwtool aggregate 5000:5000 cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc37_remove_gene_body_and_10kb_extension_normalized.bed GSM1027347_UW.Fetal_Kidney_Left.ChromatinAccessibility.H-24626.DNase.DS21344.bw GSM1027347_UW.Fetal_Kidney_Left_all_enh_extended.grc37_remove_gene_body_and_10kb_extension_normalized_bwt_agg.txt -expanded
+
+
+./bwtool aggregate 5000:5000 random_regions_hg19_for_chromHMM_comparison.bed GSM1027338_UW.Fetal_Kidney_Left.ChromatinAccessibility.H-24582.DNase.DS20953.bw GSM1027338_UW.Fetal_Kidney_Left_random_regions_bwt_agg.txt -expanded
+
+
+	awk -v OFS="\t" '{if(NR!=1) {print $1,$2,$3,$4}}' enhancers_from_cancer_discovery_paper.txt > temp.enh.txt
+
+	/home/pubudu/projects/rrg-hsn/utilities/bwtool/./bwtool aggregate 5000:5000 temp.enh.txt GSM1027338_UW.Fetal_Kidney_Left.ChromatinAccessibility.H-24582.DNase.DS20953.bw GSM1027338_UW.Fetal_Kidney_Left_cancer_paper_all_enh_regions_bwt_agg.txt -expanded
+
+
+	#create plots
+	#module load gcc/5.4.0 r-bundle-bioconductor/3.4
+
+```
+
+
+##produce the plot
+```{r}
+
+library(dplyr)
+library(data.table)
+library(stringi)
+library(GenomicRanges)
+library(rtracklayer)
+
+f1 <- fread(file="GSM1027337_UW.Fetal_Kidney_Right_all_enh_extended.grc37_remove_gene_body_and_10kb_extension_normalized_bwt_agg.txt")
+f1$Sample <- "Female fetal right kidney"
+
+f2 <- fread(file="GSM1027337_UW.Fetal_Kidney_Left_all_enh_extended.grc37_remove_gene_body_and_10kb_extension_normalized_bwt_agg.txt")
+f2$Sample <- "Female fetal left kidney"
+
+f3 <- fread(file="GSM1027346_UW.Fetal_Kidney_right_all_enh_extended.grc37_remove_gene_body_and_10kb_extension_normalized_bwt_agg.txt")
+
+f3$Sample <- "Male fetal right kidney"
+
+f4 <- fread(file="GSM1027347_UW.Fetal_Kidney_Left_all_enh_extended.grc37_remove_gene_body_and_10kb_extension_normalized_bwt_agg.txt")
+f4$Sample <- "Male fetal left kidney"
+
+f5 <- fread(file="GSM1027338_UW.Fetal_Kidney_Left_cancer_paper_all_enh_regions_bwt_agg.txt")
+f5$Sample <- "Yao et al, enhancers "
+
+
+
+f_rand <- fread(file="GSM1027338_UW.Fetal_Kidney_Left_random_regions_bwt_agg.txt")
+f_rand$Sample <- "random_regions"
+
+final_df <- rbind(f1,f2,f3,f4, f_rand, f5)
+
+
+	library(ggplot2)
+	 pdf(file="graphs/average.dhs.signal.from.the.center.of.our.enhancers.bwtool.agg_add.ref.pdf", height=5,width=12)
+		ggplot(data=final_df, aes(x=V1, y=V2, color=Sample)) +
+  geom_line()+
+  #print standard mean of error as a ribon
+  geom_ribbon(data=final_df, aes(ymin=V8,ymax=V9),alpha=0.1)+
+  #geom_point()+
+  theme_bw()+
+   xlab("Relative distance \nfrom centre of enhancer") + ylab("Average DHS signal")+
+			theme(plot.title = element_text(size=12), legend.position = "right", text = element_text(size=29),
+          axis.text = element_text( size=21), legend.key.size = unit(1.5, 'lines'),
+          panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+						panel.background = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.length=unit(.25, "cm"))
+dev.off()
+
+```
+
+
+#Fig 1F
+```{bash}
+
+###############################################################################################################
+#######new analysis for chromHMM enhancer overlap with our enhancers
+##paper to read
+
+#https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0169249&type=printable
+
+#https://i12g-gagneurweb.in.tum.de/public/paper/GenoSTAN/
+#https://egg2.wustl.edu/roadmap/web_portal/imputed.html#chr_imp
+
+	#module load gcc/5.4.0 bedtools/2.26.0
+
+	bedtools random -n 24476 -l 1000 -g hg38.chrom.sizes -seed 1600 | awk -v OFS="\t" '{print $1,$2,$3,"region"NR}' > random_regions_hg38_for_chromHMM_comparison.bed
+
+	bedtools random -n 24476 -l 1000 -g hg38.chrom.sizes -seed 1700 | awk -v OFS="\t" '{print $1,$2,$3,"region"NR}' > random_regions_hg38_for_chromHMM_comparison_seed1700.bed
+
+	bedtools random -n 24476 -l 400 -g hg19.chrom.sizes -seed 1600 | awk -v OFS="\t" '{print $1,$2,$3,"region"NR}' > random_regions_hg19_for_chromHMM_comparison.bed
+
+	###tumor
+	bedtools random -n 22253 -l 400 -g hg38.chrom.sizes -seed 1700 | awk -v OFS="\t" '{print $1,$2,$3,"region"NR}' > random_regions_hg38_for_chromHMM_comparison_seed1700_for_T_enh.bed
+
+	bedtools random -n 22253 -l 400 -g hg38.chrom.sizes -seed 1600 | awk -v OFS="\t" '{print $1,$2,$3,"region"NR}' > random_regions_hg38_for_chromHMM_comparison_seed1600_for_T_enh.bed
+
+	###normal
+	bedtools random -n 10536 -l 400 -g hg38.chrom.sizes -seed 1700 | awk -v OFS="\t" '{print $1,$2,$3,"region"NR}' > random_regions_hg38_for_chromHMM_comparison_seed1700_for_N_enh.bed
+
+	bedtools random -n 10536 -l 400 -g hg38.chrom.sizes -seed 1600 | awk -v OFS="\t" '{print $1,$2,$3,"region"NR}' > random_regions_hg38_for_chromHMM_comparison_seed1600_for_N_enh.bed
+
+
+```
+
+```{r}
+	
+df <- fread("resulted enhancers from binomial test_p_value_combined_promoter5kb_new.csv")
+
+df <- df %>% unique
+
+df2 <- fread("cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension_normalized_1kb.bed", sep="\t")
+
+df3 <- merge(df2, df, by.y="Peak" , by.x="V4")
+
+df3 <- select(df3 , c("V1", "V2", "V3", "V4"))
+	
+write.table(df3, file="cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension_normalized_1kb_corrected_number.bed", sep="\t", row.names=F, col.names=F, quote=F)
+
+```
+	module load gcc/5.4.0 bedtools/2.26.0
+
+```{bash}
+	###all T an N
+
+	#10% overlap with our enhancers with genoSTAN enhancers
+	
+	#enhancers
+	awk -v OFS="\t" '{print $1,$2,$3,$4}' GenoSTAN_enhancers.bed | bedtools intersect -a cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension_normalized_1kb_corrected_number.bed -b stdin -wao -f 0.1 | awk -v OFS="\t" '{if($7!=-1){print $0}}' > genostand_enh_overlap_with_all_enh_10pcnt_overlap_extended_normalized.bed
+
+#random regions
+	awk -v OFS="\t" '{print $1,$2,$3,$4}' GenoSTAN_enhancers.bed | bedtools intersect -a random_regions_hg38_for_chromHMM_comparison.bed -b stdin -wao -f 0.1 | awk -v OFS="\t" '{if($7!=-1){print $0}}' > genostand_enh_overlap_with_random_regions_hg38_10pcnt_overlap_extended_normalized.bed
+
+	awk -v OFS="\t" '{print $1,$2,$3,$4}' GenoSTAN_enhancers.bed | bedtools intersect -a random_regions_hg38_for_chromHMM_comparison_seed1700.bed -b stdin -wao -f 0.1 | awk -v OFS="\t" '{if($7!=-1){print $0}}' > genostand_enh_overlap_with_random_regions_hg38_10pcnt_overlap_extended_normalized_seed1700..bed
+
+#Yao et al enahcners
+
+	awk -v OFS="\t" '{print $1,$2,$3,$4}' GenoSTAN_enhancers.bed | bedtools intersect -a enhancers_from_cancer_discovery_paper.grc38_liftovercorrect.bed -b stdin -wao -f 0.1 | awk -v OFS="\t" '{if($7!=-1){print $0}}' | awk -v OFS="\t" '{print $1,$2,$3,$4,$6,$7,$8,$9,$10}' > genostand_enh_overlap_with_all_enh_cancer_paper_10pcnt_overlap_extended_normalized.bed
+
+
+```
+
+
+```{r}
+
+library(dplyr)
+library(data.table)
+library(stringi)
+library(GenomicRanges)
+library(rtracklayer)
+
+	chromHMM_enhacer_comparison <- function(file.name=NULL, iterationN=0, group=NULL) {
+	enh_overlap_genostand <- file.name
+
+	#group by peak name and cell type
+	#we need to count how many peaks overlap with each cell type
+	#sometimes the same peak can be overlapped with different regions in the same cell type. in that case we have multiple rows with same peak and cell type
+	#in summarise we count how many of these present for each peak and cell type
+
+
+	temp <- data.frame(cell_types=1:127)
+	for(i in 2:(iterationN+1)){
+	enh_grp <- enh_overlap_genostand %>% group_by(V4, V8 ) %>% summarise(enh_count=n())
+
+	#then order by the counts
+	#enh_grp <- enh_grp[order(enh_grp$enh_count, enh_grp$V4),]
+
+	#create a new data frame with randomized index and cell type
+	cell_types <- data.frame(index =rnorm(127, mean=50, sd=10))
+	a <- enh_overlap_genostand %>% select("V8") %>% unique %>% as.data.frame
+
+	cell_types <-  data.frame(cell_types, a)
+	cell_types <- cell_types %>% as.data.frame
+
+	enh_grp <- enh_grp %>% as.data.frame
+
+
+	#match cell type and index
+	enh_grp$index <- cell_types$index[match(enh_grp$V8, cell_types$V8)]
+	##order by count and index
+	enh_grp <- arrange(enh_grp, desc(enh_grp$enh_count), desc(enh_grp$index))
+
+	#b <-  subset(enh_grp, !duplicated(enh_grp[,1])) %>% group_by(V8) %>%summarise(sum_enh_count=sum(enh_count)) %>% as.data.frame %>% select("sum_enh_count")
+	b <-  subset(enh_grp, !duplicated(enh_grp[,1])) %>% group_by(V8) %>%summarise(sum_enh_count= n()) %>% as.data.frame %>% select("sum_enh_count")
+
+	#this code will need later
+	#to automate the process
+	b[dim(b)[1]:127,1] <- 0
+	b <- b[order(-b$sum_enh_count),]
+	temp[,i] <- b
+
+	}
+
+
+	temp$row_mean <- rowMeans(temp[, c(2:length(colnames(temp)))])
+
+temp <- temp[order(-temp$row_mean),]
+
+temp$cumsum <- cumsum(temp$row_mean)
+
+
+
+	 temp$cell_types <- 1:dim(temp)[1]
+
+	 temp <- select(temp, c("cell_types","cumsum"))
+	 temp$group <- group
+	 #create a line plot
+	 return(temp)
+
+	 }
+
+	t1 <- fread("genostand_enh_overlap_with_all_enh_10pcnt_overlap_extended_normalized.bed")
+
+	t1 <- chromHMM_enhacer_comparison(file.name=t1, iterationN=5, group="all_normalized_enhancers")
+
+
+
+	t2 <- fread("genostand_enh_overlap_with_random_regions_hg38_10pcnt_overlap_extended_normalized.bed")
+
+	t2 <- chromHMM_enhacer_comparison(file.name=t2, iterationN=5, group="random_regions")
+
+	t3 <- fread("genostand_enh_overlap_with_random_regions_hg38_10pcnt_overlap_extended_normalized_seed1700..bed")
+
+	t3 <- chromHMM_enhacer_comparison(file.name=t3, iterationN=5, group="random_regions2")
+
+	t4 <- fread("genostand_enh_overlap_with_all_enh_cancer_paper_10pcnt_overlap_extended_normalized.bed")
+
+	t4 <- chromHMM_enhacer_comparison(file.name=t4, iterationN=5, group="all_enhancers_in_ref")
+
+	final_df <- rbind(t1,t2, t3, t4)
+	#puka thamay
+	 pdf(file="graphs/genostan.enh_comparison_with_all_enh.lineplot_10pcnt_overlap_random_avg_ref.pdf", height=5,width=12)
+	library(ggplot2)
+	ggplot(data=final_df, aes(x=cell_types, y=cumsum, color=group)) +
+  geom_line()+
+  geom_point()+
+theme_bw()+
+theme(plot.title = element_text(size=12), legend.position = "right", text = element_text(size=29),
+          axis.text = element_text( size=21), legend.key.size = unit(1.5, 'lines'),
+          panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+						panel.background = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.length=unit(.25, "cm"))+
+   ylab("Number of overlaps\nat 10%") + xlab("Number of chromHMM\nCell types")
+dev.off()
+
+tail(t1)
+tail(t2)
+tail(t3)
+tail(t4)
+
+
+#divide final number in each table 
+#17040.6/24476 = 0.6962167
+#5080.8/24476 = 0.2075829
+#5081.0/24476 = 0.2075911
+#8277.4/10560 = 0.7838447
+```
+

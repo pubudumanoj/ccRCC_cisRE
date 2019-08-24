@@ -1,0 +1,92 @@
+#!/bin/bash
+
+#PBS -l nodes=1:ppn=3,pmem=30gb
+#PBS -l walltime=8:00:00
+#PBS -A czx-944-aa
+#PBS -o chip_H3K27ac_out.txt
+#PBS -e chip_H3K27ac_err.txt
+#PBS -N Chip_H3K27acM
+#PBS -V
+#PBS -t 6
+
+##Here I include script for H3K27ac. modify the script for H3K4me1 and H3K4me3
+table="chip_pileups/table_H3K27ac.txt"
+rawfileName=`cat $table | head -n $PBS_ARRAYID | tail -n 1 | cut -f1`
+fileName=`cat $table | head -n $PBS_ARRAYID | tail -n 1 | cut -f2`
+controlFile=`cat $table | head -n $PBS_ARRAYID | tail -n 1 | cut -f5`
+rawcontrolfileName=`cat $table | head -n $PBS_ARRAYID | tail -n 1 | cut -f4`
+baminput=""
+echo $rawfileName
+echo $fileName
+#########This pipeline is for Chip-seq##########
+################################################
+##### Define directories and tool locations ####
+################################################
+projectDir=''
+ChipseqDIR='chip_pileups'
+scratchDiR=''
+
+fName=$fileName
+referenceGenome='bowtie2/GCA_000001405.15_GRCh38_no_alt_analysis_set.fna.bowtie_index'
+##############current directory#################
+
+##print current directory
+
+echo "current directory is"
+pwd
+##currently existing files
+ls -l -h
+
+##Redirect in to the local scratch directory
+
+pwd
+ls -l -h
+
+################################################
+#######Convert unpaired  bam to sam#############
+
+echo "converting unpaired bam to fastq"
+
+bedtools bamtofastq -i ${scratchDiR}${rawfileName} -fq ${fName}.fq
+ls -1 -h
+#bedtools bamtofastq -i ${scratchDiR}${patient}/${rawcontrolfileName} -fq ${controlFile}.fq
+ls -l
+
+echo "unpaired bam to fastq converstion done..."
+
+################################################
+#####Map to the GRC38 reference human genome####
+echo "mapping to the genome started"
+bowtie2 -q -p 3 -x ${referenceGenome} -U ${fName}.fq -S ${fName}.sam
+
+###############################################
+#######count reads with hisat-count############
+echo "sam to bam conversion and filtering by mapping quality 30 started"
+
+#samtools view -bSq 30 ${controlFile}.sam > ${controlFile}.bam
+samtools view -bSq 30 ${fName}.sam > ${fName}.bam
+echo "sam to bam conversion and filtering done"
+
+echo "sorting by position is started"
+samtools sort -o ${fName}.srt.bam ${fName}.bam
+
+echo "sorting is done"
+
+echo " starting peak calling"
+
+######peak calling with MACS2 #################
+###############################################
+####load python################################
+module load python/2.7.9
+
+##if you want to use the stored bam file use
+#${baminput}${patient}/${controlFile}.srt.bam
+###### run macs2
+macs2 callpeak -t ${fName}.srt.bam -c ${baminput}${patient}/${controlFile}.srt.bam --broad -g hs --broad-cutoff 0.05 --bdg --tempdir $LSCRATCH -n ${fName} --outdir ${ChipseqDIR}output/${fName}
+
+echo "peak calling done"
+
+
+
+
+

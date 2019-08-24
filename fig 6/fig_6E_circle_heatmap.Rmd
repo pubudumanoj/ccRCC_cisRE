@@ -1,0 +1,997 @@
+---
+title: "TFs associated with Diferentially methylated CpGs in different cell lines"
+output: html_notebook
+author: "Pubudu Nawarathna"
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r}
+
+
+
+library(dplyr)
+library(data.table)
+library(stringi)
+
+
+ 
+DMPs <- read.csv(file="DMPs.merge.RCC4.csv")
+
+
+#create a probe region bed file for TF overlap analysis
+
+dmp.sub <- data.frame(DMPs[,c(2,3)],(DMPs[,3]+1),DMPs[,c(1,29,4,27)],stri_extract(DMPs[,13], regex='[^;]*'),stri_extract(DMPs[,15], regex='[^;]*'))
+colnames(dmp.sub)[8] <- "UCSC_RefGene_Name"
+colnames(dmp.sub)[9] <- "UCSC_RefGene_Group"
+colnames(dmp.sub)[2] <- "start"
+colnames(dmp.sub)[3] <- "end"
+
+#head(dmp.sub)
+#    chr       pos X.DMPs...3....1.       Name     logFCBeta strand adj.P.Val
+#1 chr16  53468112         53468113 cg00000029  0.0008646561      + 0.9507045
+#2  chr3  37459206         37459207 cg00000108 -0.0041468590      + 0.5668767
+#3  chr3 171916037        171916038 cg00000109 -0.0069539638      + 0.6298825
+#4  chr1  91194674         91194675 cg00000165 -0.0048093270      - 0.7691791
+#5  chr8  42263294         42263295 cg00000236 -0.0163543762      - 0.1235641
+#6 chr14  69341139         69341140 cg00000289 -0.0192500952      + 0.4811005
+#  UCSC_RefGene_Name UCSC_RefGene_Group
+#1              RBL2            TSS1500
+#2   C3orf35;C3orf35         Body;3'UTR
+#3     FNDC3B;FNDC3B          Body;Body
+#4
+#5       VDAC3;VDAC3        3'UTR;3'UTR
+#6 ACTN1;ACTN1;ACTN1  3'UTR;3'UTR;3'UTR
+
+#chr,pos,pos,logfc,padj,name,strand,UCSC_RefGene_Name,UCSC_RefGene_Group
+
+
+write.table(dmp.sub, file="DMPs.all.for.overlap.with.geneinfo.RCC4.bed", sep="\t", row.names=F, col.names=F, quote = F)
+
+ 
+DMPs <- read.csv(file="DMPs.merge.c786.21.csv")
+
+
+#create a probe region bed file for TF overlap analysis
+
+dmp.sub <- data.frame(DMPs[,c(2,3)],(DMPs[,3]+1),DMPs[,c(1,29,4,27)],stri_extract(DMPs[,13], regex='[^;]*'),stri_extract(DMPs[,15], regex='[^;]*'))
+colnames(dmp.sub)[8] <- "UCSC_RefGene_Name"
+colnames(dmp.sub)[9] <- "UCSC_RefGene_Group"
+colnames(dmp.sub)[2] <- "start"
+colnames(dmp.sub)[3] <- "end"
+
+
+write.table(dmp.sub, file="DMPs.all.for.overlap.with.geneinfo.c786.21.bed", sep="\t", row.names=F, col.names=F, quote = F)
+
+
+DMPs <- read.csv(file="DMPs.merge_patients.csv")
+
+
+#create a probe region bed file for TF overlap analysis
+
+dmp.sub <- data.frame(DMPs[,c(2,3)],(DMPs[,3]+1),DMPs[,c(1,29,4,27)],stri_extract(DMPs[,13], regex='[^;]*'),stri_extract(DMPs[,15], regex='[^;]*'))
+colnames(dmp.sub)[8] <- "UCSC_RefGene_Name"
+colnames(dmp.sub)[9] <- "UCSC_RefGene_Group"
+colnames(dmp.sub)[2] <- "start"
+colnames(dmp.sub)[3] <- "end"
+
+
+write.table(dmp.sub, file="DMPs.all.for.overlap.with.geneinfo.patients.bed", sep="\t", row.names=F, col.names=F, quote = F)
+
+
+```
+
+
+```{bash}
+
+##########TFs enrichment with hypermethylated and hypomethylated probes (stringent background)
+
+
+#first need to remove CpGs that do not have any TF binding sites close to that. take 200 bp from middle of the TF binding site
+rlength=200
+awk -v OFS="\t" -v rlength="$rlength" '{middle=int(($3-$2)/2); middle=middle+$2; if((middle-rlength>0)){print $1,middle-rlength,middle+rlength,$4,$5}}' TF.binding.sites.bed > TF.binding.sites.extended.range.${rlength}bp.from.middle.bed
+
+
+bedtools intersect -a DMPs.all.for.overlap.with.geneinfo.RCC4.bed -b TF.binding.sites.extended.range.${rlength}bp.from.middle.bed -wao | awk -v OFS="\t" '{if($11!=-1){print $0}}' | awk -v OFS="\t" '{if($10!="-1"){print $0}}' | awk -v OFS="\t" '{if($2!="-1"){print $0}}' > overlap.all.diff.methylated.probes.for.${rlength}bp.TF.with.gene.info.RCC4.txt
+
+bedtools intersect -a DMPs.all.for.overlap.with.geneinfo.c786.21.bed -b TF.binding.sites.extended.range.${rlength}bp.from.middle.bed -wao | awk -v OFS="\t" '{if($11!=-1){print $0}}' | awk -v OFS="\t" '{if($10!="-1"){print $0}}' | awk -v OFS="\t" '{if($2!="-1"){print $0}}' > overlap.all.diff.methylated.probes.for.${rlength}bp.TF.with.gene.info.c786.21.txt
+
+
+bedtools intersect -a DMPs.all.for.overlap.with.geneinfo.patients.bed -b TF.binding.sites.extended.range.${rlength}bp.from.middle.bed -wao | awk -v OFS="\t" '{if($11!=-1){print $0}}' | awk -v OFS="\t" '{if($10!="-1"){print $0}}' | awk -v OFS="\t" '{if($2!="-1"){print $0}}' > overlap.all.diff.methylated.probes.for.${rlength}bp.TF.with.gene.info.patients.txt
+
+```
+
+
+###all cpgs
+```{r}
+
+ 
+	  
+#load overlap file
+
+library(dplyr)
+library(data.table)
+library(stringi)
+
+
+hyper_hypo_enrichment_promoter <- function (fileN=NUll, celline=NULL){
+ 
+size=200
+DMPs.overlap.all.TF <- read.csv(file=fileN,sep="", sep="\t", header = FALSE)
+
+
+
+#finding the bg size
+
+ 
+
+
+
+
+  fdr=0.05
+  beta=0.2
+
+bg <-  DMPs.overlap.all.TF[ DMPs.overlap.all.TF$V7 <= fdr,]
+# logFCBeta < -0.2
+bg <- bg[bg$V5> beta | bg$V5 < -beta,]
+bg.size <- bg[!duplicated(bg$V4),]
+bg.size <- dim(bg.size)[1]
+
+#hypermethylated sites
+
+##success in background
+
+
+success.in.bg.set <-  DMPs.overlap.all.TF[ DMPs.overlap.all.TF$V7 <= fdr,]
+# logFCBeta < -0.2
+success.in.bg.set <- success.in.bg.set[success.in.bg.set$V5 > beta ,]
+success.in.bg <- success.in.bg.set[!duplicated(success.in.bg.set$V4),]
+success.in.bg <- dim(success.in.bg)[1]
+
+
+#get number of probes for all the TFs seperately
+
+
+  overlapped.TFs.all.probes <- data.frame(bg[,c(4,13)])
+
+  #count the number of probes for each group of tf.
+  all.probes.for.one.TF <- setDT(overlapped.TFs.all.probes)[, .(count.all.probes.for.TF = uniqueN(V4)), by = V13] # #sample size
+
+  ##filter hypermethylated regions
+  
+
+  #success in sample
+  
+  
+
+hypermethylated.probes <- success.in.bg.set[success.in.bg.set$V7 <= fdr,]
+
+hypermethylated.probes.TFs.count <- setDT(hypermethylated.probes[,c(4,13)])[, .(count.hypermethylated.probes.for.TF = uniqueN(V4)), by = V13] #success in sample
+
+###merge all probes and hypermethylated probes TF count
+
+merge.probes.count.for.TF <- merge(all.probes.for.one.TF, hypermethylated.probes.TFs.count, by="V13", all.x=T)
+  
+    #mutate column count.diff.ex.genes with 0 if it has NA in a row # because x=T all the rows are there
+ merge.probes.count.for.TF <- merge.probes.count.for.TF %>% mutate(count.hypermethylated.probes.for.TF = ifelse(is.na(count.hypermethylated.probes.for.TF),0,count.hypermethylated.probes.for.TF))
+ 
+ 
+ merge.probes.count.for.TF[,4]<-phyper((merge.probes.count.for.TF$count.hypermethylated.probes.for.TF)-1,success.in.bg,(bg.size-success.in.bg),merge.probes.count.for.TF$count.all.probes.for.TF, lower.tail = FALSE)
+ 
+ #merge.probes.count.for.TF[,4]<-phyper((merge.probes.count.for.TF$count.hypermethylated.probes.for.TF),merge.probes.count.for.TF$count.all.probes.for.TF, (bg.size-merge.probes.count.for.TF$count.all.probes.for.TF), success.in.bg, lower.tail = TRUE)
+  
+    merge.probes.count.for.TF[,5] <- p.adjust(merge.probes.count.for.TF[,4], "BH")
+
+
+#enriched.TFs.fdr.05 <- subset(merge.probes.count.for.TF, V5 <= 0.05)
+enriched.TFs.fdr.05 <- merge.probes.count.for.TF
+cellline="RCC4"
+colnames(enriched.TFs.fdr.05)[1] <- "TF Name"
+colnames(enriched.TFs.fdr.05)[5] <- "FDR"
+colnames(enriched.TFs.fdr.05)[4] <- "P-Value"
+write.table(enriched.TFs.fdr.05, file = paste("enriched.TFs.",size,"bp.in.hypermethylated.probes.in.hypo.plus.hyperbg.",cellline,".fdr.05.txt",sep=""), sep = "\t", row.names=F,quote=F)
+ #write.table(enriched.TFs.fdr.05, file = paste("depelted.TFs.",size,"bp.in.hypermethylated.probes.in.hypo.plus.hyperbg.",cellline,".fdr.05.txt",sep=""), sep = "\t", row.names=F,quote=F)
+ 
+ 
+ 
+ 
+ 
+ ###########################
+ ##############################
+ ##############################
+ 
+ 
+ 
+#hypomethylated sites
+
+##success in background
+
+
+success.in.bg.set <-  DMPs.overlap.all.TF[ DMPs.overlap.all.TF$V7 <= fdr,]
+# logFCBeta < -0.2
+success.in.bg.set <- success.in.bg.set[success.in.bg.set$V5 < -beta ,]
+success.in.bg <- success.in.bg.set[!duplicated(success.in.bg.set$V4),]
+success.in.bg <- dim(success.in.bg)[1]
+
+
+#hypomethylated sites
+#get number of probes for all the TFs seperately
+
+
+  overlapped.TFs.all.probes <- data.frame(bg[,c(4,13)])
+
+  #count the number of probes for each group of tf.
+  all.probes.for.one.TF <- setDT(overlapped.TFs.all.probes)[, .(count.all.probes.for.TF = uniqueN(V4)), by = V13] # #sample size
+
+  ##filter hypomethylated regions
+  
+
+  #success in sample
+  
+  
+
+hypomethylated.probes <- success.in.bg.set[success.in.bg.set$V7 <= fdr,]
+
+hypomethylated.probes.TFs.count <- setDT(hypomethylated.probes[,c(4,13)])[, .(count.hypomethylated.probes.for.TF = uniqueN(V4)), by = V13] #success in sample
+
+###merge all probes and hypomethylated probes TF count
+
+merge.probes.count.for.TF <- merge(all.probes.for.one.TF, hypomethylated.probes.TFs.count, by="V13", all.x=T)
+  
+    #mutate column count.diff.ex.genes with 0 if it has NA in a row # because x=T all the rows are there
+ merge.probes.count.for.TF <- merge.probes.count.for.TF %>% mutate(count.hypomethylated.probes.for.TF = ifelse(is.na(count.hypomethylated.probes.for.TF),0,count.hypomethylated.probes.for.TF))
+ 
+ merge.probes.count.for.TF[,4]<-phyper((merge.probes.count.for.TF$count.hypomethylated.probes.for.TF)-1,success.in.bg,(bg.size-success.in.bg),merge.probes.count.for.TF$count.all.probes.for.TF, lower.tail = FALSE)
+ 
+ #merge.probes.count.for.TF[,4]<-phyper((merge.probes.count.for.TF$count.hypomethylated.probes.for.TF),merge.probes.count.for.TF$count.all.probes.for.TF, (bg.size-merge.probes.count.for.TF$count.all.probes.for.TF), success.in.bg, lower.tail = TRUE)
+  
+    merge.probes.count.for.TF[,5] <- p.adjust(merge.probes.count.for.TF[,4], "BH")
+
+
+#enriched.TFs.fdr.05 <- subset(merge.probes.count.for.TF, V5 <= 0.05)
+enriched.TFs.fdr.05  <- merge.probes.count.for.TF
+cellline="RCC4"
+colnames(enriched.TFs.fdr.05)[1] <- "TF Name"
+colnames(enriched.TFs.fdr.05)[5] <- "FDR"
+colnames(enriched.TFs.fdr.05)[4] <- "P-Value"
+write.table(enriched.TFs.fdr.05, file = paste("enriched.TFs.",size,"bp.in.hypomethylated.probes.in.hypo.plus.hyperbg.",cellline,".fdr.05.txt",sep=""), sep = "\t", row.names=F,quote=F)
+ #write.table(enriched.TFs.fdr.05, file = paste("depelted.TFs.",size,"bp.in.hypomethylated.probes.in.hypo.plus.hyperbg.",cellline,".fdr.05.txt",sep=""), sep = "\t", row.names=F,quote=F)
+ 
+}
+
+
+hyper_hypo_enrichment_promoter("overlap.all.diff.methylated.probes.for.200bp.TF.with.gene.info.RCC4.txt", celline="RCC4")
+hyper_hypo_enrichment_promoter("overlap.all.diff.methylated.probes.for.200bp.TF.with.gene.info.c786.21.txt", celline="c786.21")
+hyper_hypo_enrichment_promoter("overlap.all.diff.methylated.probes.for.200bp.TF.with.gene.info.patients.txt", celline="patients")
+```
+
+
+#################################################################################
+####get promoter region from gene annotation file and overlap with CpGs and get the TFs enrichment
+
+```{bash} 
+ ######################################new analysis
+#get the 2kb region from TSS (promoter 2kb)
+#in shell
+
+#Download GRCh37 gene annotation file from encode
+#file name= Homo_sapiens.GRCh37.75.gtf
+
+rlength=2000
+size="2kb"
+awk -v OFS="\t" -v rlength="$rlength" 'BEGIN{a=0;b=0;c=0} { if($3=="gene") {gname= substr($10, 1, length($10)-2); gname = substr(gname, 2, length(gname)-1); if($7=="+") {a=$4; if(a-rlength>0) {b=a-rlength; c=a; print $1="chr"$1,b,c,gname,".",$7}} else if($7=="-"){a=$5; if(a-rlength>0) {b=a; c=a+rlength; print $1="chr"$1,b,c,gname,".",$7} }}}' Homo_sapiens.GRCh37.75.gtf > promter.${size}.grc37.bed
+
+#find overlap
+#check whehter $8 and $2 are -1. they get -1 if no overlaps found
+cell="RCC4"
+
+bedtools intersect -a promter.${size}.grc37.bed -b DMPs.all.for.overlap.with.geneinfo.RCC4.bed -wao |  awk -v OFS="\t" '{if($8!=-1){print $0}}' | awk -v OFS="\t" '{if($9!="-1"){print $0}}' | awk -v OFS="\t" '{if($2!="-1"){print $0}}' | awk '{printf $7"\t"$8"\t"$9"\t"$10"\t"$11"\t"$12"\t"$13"\t"$14"\t"$15"\t"$4"\n"}' | awk -v OFS="\t" '{if($8==1){print $1,$2,$3,$4,$5,$6,$7,"NA","NA",$9} else{print $0}}' > overlap.promoter.grc37.${size}.DMPs.${cell}.with.CpG.gene.info.txt
+
+rlength=200
+####overlap with TF binding annotation file
+bedtools intersect -a overlap.promoter.grc37.${size}.DMPs.${cell}.with.CpG.gene.info.txt -b TF.binding.sites.extended.range.${rlength}bp.from.middle.bed -wao | awk -v OFS="\t" '{if($12!=-1){print $0}}' | awk -v OFS="\t" '{if($13!="-1"){print $0}}' | awk -v OFS="\t" '{if($2!="-1"){print $0}}' > overlap.promoter.${size}.diff.methylated.probes.for.${rlength}bp.TF.with.gene.info.RCC4.txt
+
+cell="c786.21"
+bedtools intersect -a promter.${size}.grc37.bed -b DMPs.all.for.overlap.with.geneinfo.c786.21.bed -wao |  awk -v OFS="\t" '{if($8!=-1){print $0}}' | awk -v OFS="\t" '{if($9!="-1"){print $0}}' | awk -v OFS="\t" '{if($2!="-1"){print $0}}' | awk '{printf $7"\t"$8"\t"$9"\t"$10"\t"$11"\t"$12"\t"$13"\t"$14"\t"$15"\t"$4"\n"}' | awk -v OFS="\t" '{if($8==1){print $1,$2,$3,$4,$5,$6,$7,"NA","NA",$9} else{print $0}}' > overlap.promoter.grc37.${size}.DMPs.${cell}.with.CpG.gene.info.txt
+
+rlength=200
+####overlap with TF binding annotation file
+bedtools intersect -a overlap.promoter.grc37.${size}.DMPs.${cell}.with.CpG.gene.info.txt -b TF.binding.sites.extended.range.${rlength}bp.from.middle.bed -wao | awk -v OFS="\t" '{if($12!=-1){print $0}}' | awk -v OFS="\t" '{if($13!="-1"){print $0}}' | awk -v OFS="\t" '{if($2!="-1"){print $0}}' > overlap.promoter.${size}.diff.methylated.probes.for.${rlength}bp.TF.with.gene.info.c786.21.txt
+
+cell="patients"
+bedtools intersect -a promter.${size}.grc37.bed -b DMPs.all.for.overlap.with.geneinfo.patients.bed -wao |  awk -v OFS="\t" '{if($8!=-1){print $0}}' | awk -v OFS="\t" '{if($9!="-1"){print $0}}' | awk -v OFS="\t" '{if($2!="-1"){print $0}}' | awk '{printf $7"\t"$8"\t"$9"\t"$10"\t"$11"\t"$12"\t"$13"\t"$14"\t"$15"\t"$4"\n"}' | awk -v OFS="\t" '{if($8==1){print $1,$2,$3,$4,$5,$6,$7,"NA","NA",$9} else{print $0}}' > overlap.promoter.grc37.${size}.DMPs.${cell}.with.CpG.gene.info.txt
+
+rlength=200
+####overlap with TF binding annotation file
+bedtools intersect -a overlap.promoter.grc37.${size}.DMPs.${cell}.with.CpG.gene.info.txt -b TF.binding.sites.extended.range.${rlength}bp.from.middle.bed -wao | awk -v OFS="\t" '{if($12!=-1){print $0}}' | awk -v OFS="\t" '{if($13!="-1"){print $0}}' | awk -v OFS="\t" '{if($2!="-1"){print $0}}' > overlap.promoter.${size}.diff.methylated.probes.for.${rlength}bp.TF.with.gene.info.patients.txt
+
+
+
+```
+
+
+
+```{r}	  
+#load overlap file
+
+library(dplyr)
+library(data.table)
+library(stringi)
+
+hyper_hypo_enrichment_promoter <- function (fileN=NULL, cellline=NULL){
+ 
+size="2kb"
+rlength=200
+DMPs.overlap.all.TF <- read.csv(file=fileN, sep="\t", header = FALSE)
+#DMPs.overlap.all.TF <- read.csv(file=paste("overlap.promoter.",size,".diff.methylated.probes.for.",rlength,"bp.TF.with.gene.info.RCC4.txt",sep=""), sep="\t", header = FALSE)
+
+
+
+#finding the bg size
+
+  fdr=0.05
+  beta=0.2
+
+bg <-  DMPs.overlap.all.TF[ DMPs.overlap.all.TF$V7 <= fdr,]
+# logFCBeta < -0.2
+bg <- bg[bg$V5> beta | bg$V5 < -beta,]
+bg.size <- bg[!duplicated(bg$V4),]
+bg.size <- dim(bg.size)[1]
+
+#hypermethylated sites
+
+##success in background
+
+
+success.in.bg.set <-  DMPs.overlap.all.TF[ DMPs.overlap.all.TF$V7 <= fdr,]
+# logFCBeta < -0.2
+success.in.bg.set <- success.in.bg.set[success.in.bg.set$V5 > beta ,]
+success.in.bg <- success.in.bg.set[!duplicated(success.in.bg.set$V4),]
+success.in.bg <- dim(success.in.bg)[1]
+
+
+#get number of probes for all the TFs seperately
+
+#      V1     V2     V3         V4        V5 V6           V7   V8   V9
+#602 chr1 839435 839436 cg08128007 0.2062280  + 5.942936e-05 <NA> <NA>
+#618 chr1 846507 846508 cg06154531 0.4530941  + 3.056202e-06 <NA> <NA>
+#619 chr1 846507 846508 cg06154531 0.4530941  + 3.056202e-06 <NA> <NA>
+#620 chr1 846507 846508 cg06154531 0.4530941  + 3.056202e-06 <NA> <NA>
+#621 chr1 846507 846508 cg06154531 0.4530941  + 3.056202e-06 <NA> <NA>
+#622 chr1 846507 846508 cg06154531 0.4530941  + 3.056202e-06 <NA> <NA>
+#                V10  V11    V12    V13    V14 V15 V16
+#602 ENSG00000272438 chr1 839175 839575  HMGN3 121   1
+#618 ENSG00000230699 chr1 846425 846825 ZNF263 516   1
+#619 ENSG00000230699 chr1 846452 846852    MYC 153   1
+#620 ENSG00000230699 chr1 846472 846872   JUNB 136   1
+#621 ENSG00000230699 chr1 846493 846893    MAZ 282   1
+#622 ENSG00000230699 chr1 846479 846879 POLR2A 158   1
+
+
+  overlapped.TFs.all.probes <- data.frame(bg[,c(4,14)])
+
+  #count the number of probes for each group of tf.
+  all.probes.for.one.TF <- setDT(overlapped.TFs.all.probes)[, .(count.all.probes.for.TF = uniqueN(V4)), by = V14] # #sample size
+
+  ##filter hypermethylated regions
+  
+
+  #success in sample
+  
+  
+
+hypermethylated.probes <- success.in.bg.set[success.in.bg.set$V7 <= fdr,]
+
+hypermethylated.probes.TFs.count <- setDT(hypermethylated.probes[,c(4,14)])[, .(count.hypermethylated.probes.for.TF = uniqueN(V4)), by = V14] #success in sample
+
+###merge all probes and hypermethylated probes TF count
+
+merge.probes.count.for.TF <- merge(all.probes.for.one.TF, hypermethylated.probes.TFs.count, by="V14", all.x=T)
+  
+    #mutate column count.diff.ex.genes with 0 if it has NA in a row # because x=T all the rows are there
+ merge.probes.count.for.TF <- merge.probes.count.for.TF %>% mutate(count.hypermethylated.probes.for.TF = ifelse(is.na(count.hypermethylated.probes.for.TF),0,count.hypermethylated.probes.for.TF))
+ 
+ 
+ merge.probes.count.for.TF[,4]<-phyper((merge.probes.count.for.TF$count.hypermethylated.probes.for.TF)-1,success.in.bg,(bg.size-success.in.bg),merge.probes.count.for.TF$count.all.probes.for.TF, lower.tail = FALSE)
+ 
+ #merge.probes.count.for.TF[,4]<-phyper((merge.probes.count.for.TF$count.hypermethylated.probes.for.TF),merge.probes.count.for.TF$count.all.probes.for.TF, (bg.size-merge.probes.count.for.TF$count.all.probes.for.TF), success.in.bg, lower.tail = TRUE)
+  
+    merge.probes.count.for.TF[,5] <- p.adjust(merge.probes.count.for.TF[,4], "BH")
+
+
+#enriched.TFs.fdr.05 <- subset(merge.probes.count.for.TF, V5 <= 0.05)
+enriched.TFs.fdr.05 <- merge.probes.count.for.TF
+cellline="RCC4"
+colnames(enriched.TFs.fdr.05)[1] <- "TF Name"
+colnames(enriched.TFs.fdr.05)[5] <- "FDR"
+colnames(enriched.TFs.fdr.05)[4] <- "P-Value"
+write.table(enriched.TFs.fdr.05, file = paste("enriched.TFs.",rlength,"bp.in.hypermethylated.probes.in.hypo.plus.hyperbg.",cellline,".promoter.",size,".fdr.05.txt",sep=""), sep = "\t", row.names=F,quote=F)
+
+ 
+ 
+ 
+ 
+ 
+ ###########################
+ ##############################
+ ##############################
+ 
+ 
+ 
+#hypomethylated sites
+
+##success in background
+
+
+success.in.bg.set <-  DMPs.overlap.all.TF[ DMPs.overlap.all.TF$V7 <= fdr,]
+# logFCBeta < -0.2
+success.in.bg.set <- success.in.bg.set[success.in.bg.set$V5 < -beta ,]
+success.in.bg <- success.in.bg.set[!duplicated(success.in.bg.set$V4),]
+success.in.bg <- dim(success.in.bg)[1]
+
+
+#hypomethylated sites
+#get number of probes for all the TFs seperately
+
+
+  overlapped.TFs.all.probes <- data.frame(bg[,c(4,14)])
+
+  #count the number of probes for each group of tf.
+  all.probes.for.one.TF <- setDT(overlapped.TFs.all.probes)[, .(count.all.probes.for.TF = uniqueN(V4)), by = V14] # #sample size
+
+  ##filter hypomethylated regions
+  
+
+  #success in sample
+  
+  
+
+hypomethylated.probes <- success.in.bg.set[success.in.bg.set$V7 <= fdr,]
+
+hypomethylated.probes.TFs.count <- setDT(hypomethylated.probes[,c(4,14)])[, .(count.hypomethylated.probes.for.TF = uniqueN(V4)), by = V14] #success in sample
+
+###merge all probes and hypomethylated probes TF count
+
+merge.probes.count.for.TF <- merge(all.probes.for.one.TF, hypomethylated.probes.TFs.count, by="V14", all.x=T)
+  
+    #mutate column count.diff.ex.genes with 0 if it has NA in a row # because x=T all the rows are there
+ merge.probes.count.for.TF <- merge.probes.count.for.TF %>% mutate(count.hypomethylated.probes.for.TF = ifelse(is.na(count.hypomethylated.probes.for.TF),0,count.hypomethylated.probes.for.TF))
+ 
+ merge.probes.count.for.TF[,4]<-phyper((merge.probes.count.for.TF$count.hypomethylated.probes.for.TF)-1,success.in.bg,(bg.size-success.in.bg),merge.probes.count.for.TF$count.all.probes.for.TF, lower.tail = FALSE)
+ 
+ #merge.probes.count.for.TF[,4]<-phyper((merge.probes.count.for.TF$count.hypomethylated.probes.for.TF),merge.probes.count.for.TF$count.all.probes.for.TF, (bg.size-merge.probes.count.for.TF$count.all.probes.for.TF), success.in.bg, lower.tail = TRUE)
+  
+    merge.probes.count.for.TF[,5] <- p.adjust(merge.probes.count.for.TF[,4], "BH")
+
+
+#enriched.TFs.fdr.05 <- subset(merge.probes.count.for.TF, V5 <= 0.05)
+enriched.TFs.fdr.05 <- merge.probes.count.for.TF
+cellline="RCC4"
+colnames(enriched.TFs.fdr.05)[1] <- "TF Name"
+colnames(enriched.TFs.fdr.05)[5] <- "FDR"
+colnames(enriched.TFs.fdr.05)[4] <- "P-Value"
+write.table(enriched.TFs.fdr.05, file = paste("enriched.TFs.",rlength,"bp.in.hypomethylated.probes.in.hypo.plus.hyperbg.",cellline,".promoter.",size,".fdr.05.txt",sep=""), sep = "\t", row.names=F,quote=F)
+ 
+}
+
+hyper_hypo_enrichment_promoter(fileN="overlap.promoter.2kb.diff.methylated.probes.for.200bp.TF.with.gene.info.RCC4.txt", cellline="RCC4")
+
+hyper_hypo_enrichment_promoter(fileN="overlap.promoter.2kb.diff.methylated.probes.for.200bp.TF.with.gene.info.c786.21.txt", cellline="c786.21")
+
+```
+
+
+```{r}
+##creating data matrices for complex heatmap
+
+setwd("../../files")
+##########
+#uncomment the  cellline for each cell line  and create these files 
+############
+
+
+#merge enriched TFs in probes with their log2 fold change
+
+create_complex_heatmap_files <- function  (diff="hyper", celline="RCC4", promoter=""){
+  size=200
+TF.ID.and.Name <-  fread("gene_reference.txt", header = F)
+TF.ID.and.Name <- TF.ID.and.Name[, c(1,3)]
+TF.ID.and.Name$V1 <- word(TF.ID.and.Name$V1,1, sep = "\\.")
+TF.ID.and.Name
+colnames(TF.ID.and.Name) <- c("Gene.stable.ID","TF.Name")
+
+
+#conventional patients
+all.diff.ex.genes <- read.csv(file = "ordered down regulated genes paired conventional patients.csv", sep = ",")
+
+#merge TEs found in enrichment test for hypermethylated probes in 450k array in cell lines (RCC4-VHL vs RCC4-mock)
+TFs.enrcihed.probes <- read.csv(file = paste("enriched.TFs.",size,"bp.in.",diff,"methylated.probes.in.hypo.plus.hyperbg.",promoter,cellline,".fdr.05.txt",sep=""), sep = "\t")
+
+merge.TFs.and.ID <- merge( TF.ID.and.Name, TFs.enrcihed.probes )
+
+colnames(all.diff.ex.genes)[1] <- "Gene.stable.ID"
+merge.selected.TFs <- merge( all.diff.ex.genes, merge.TFs.and.ID  )
+
+
+write.csv(merge.selected.TFs, file=paste("enriched.TFs.",size,"bp.in.",diff,"methylated.probes.in.hypo.plus.hyperbg.",promoter,cellline,".fdr.05.and.log2foldchange.csv",sep=""))
+}
+
+
+create_complex_heatmap_file("hyper", "RCC4")
+create_complex_heatmap_file("hypo", "RCC4")
+create_complex_heatmap_file("hyper", "c786.21")
+create_complex_heatmap_file("hypo", "c786.21")
+
+create_complex_heatmap_file("hyper", "RCC4", "promoter.2kb")
+create_complex_heatmap_file("hypo", "RCC4", "promoter.2kb")
+create_complex_heatmap_file("hyper", "c786.21", "promoter.2kb")
+create_complex_heatmap_file("hypo", "c786.21" , "promoter.2kb")
+
+
+
+
+#first we need to load all 8 files
+size="200"
+promoter="promoter.2kb"
+#c786
+c786.200bp.hyper.all <-  read.csv( file=paste(size,"bp.in.hypermethylated.probes.in.hypo.plus.hyperbg.c786.21.fdr.05.and.log2foldchange.csv",sep=""),sep = ",")
+c786.200bp.hypo.all <-  read.csv( file=paste(size,"bp.in.hypomethylated.probes.in.hypo.plus.hyperbg.c786.21.fdr.05.and.log2foldchange.csv",sep=""),sep = ",")
+c786.200bp.hyper.promoter <- read.csv( file=paste(size,"bp.in.hypermethylated.probes.in.hypo.plus.hyperbg.c786.21.",promoter,".fdr.05.and.log2foldchange.csv",sep=""),sep = ",")
+c786.200bp.hypo.promoter <- read.csv( file=paste(size,"bp.in.hypomethylated.probes.in.hypo.plus.hyperbg.c786.21.",promoter,".fdr.05.and.log2foldchange.csv",sep=""),sep = ",")
+
+#RCC4
+rcc4.200bp.hyper.all <-  read.csv( file=paste(size,"bp.in.hypermethylated.probes.in.hypo.plus.hyperbg.rcc4.fdr.05.and.log2foldchange.csv",sep=""),sep = ",")
+rcc4.200bp.hypo.all <-  read.csv( file=paste(size,"bp.in.hypomethylated.probes.in.hypo.plus.hyperbg.rcc4.fdr.05.and.log2foldchange.csv",sep=""),sep = ",")
+rcc4.200bp.hyper.promoter <- read.csv( file=paste(size,"bp.in.hypermethylated.probes.in.hypo.plus.hyperbg.rcc4.",promoter,".fdr.05.and.log2foldchange.csv",sep=""),sep = ",")
+rcc4.200bp.hypo.promoter <- read.csv( file=paste(size,"bp.in.hypomethylated.probes.in.hypo.plus.hyperbg.rcc4.",promoter,".fdr.05.and.log2foldchange.csv",sep=""),sep = ",")
+
+#c786.200bp.hyper.all is selected as the reference. therefore it has all the columns. gene expression data from other
+#files should be removed
+#they are in column number 1:8
+
+c786.200bp.hypo.all <- c786.200bp.hypo.all[c(9:13)]
+c786.200bp.hyper.promoter <- c786.200bp.hyper.promoter[c(9:13)]
+c786.200bp.hypo.promoter <- c786.200bp.hypo.promoter[c(9:13)]
+rcc4.200bp.hyper.all <- rcc4.200bp.hyper.all[c(9:13)]
+rcc4.200bp.hypo.all <- rcc4.200bp.hypo.all[c(9:13)]
+rcc4.200bp.hyper.promoter <- rcc4.200bp.hyper.promoter[c(9:13)]
+rcc4.200bp.hypo.promoter <- rcc4.200bp.hypo.promoter[c(9:13)]
+
+
+##change cilumn names as uniquly identify the column from each file
+colnames(c786.200bp.hyper.all)[c(10:13)] <-paste("c786.200bp.hyper.all", colnames(c786.200bp.hyper.all)[c(10:13)], sep = ".")
+
+#change column names of other files
+colnames(c786.200bp.hypo.all)[c(2:5)] <- paste("c786.200bp.hypo.all", colnames(c786.200bp.hypo.all)[c(2:5)], sep = ".")
+colnames(c786.200bp.hyper.promoter)[c(2:5)] <- paste("c786.200bp.hyper.promoter", colnames(c786.200bp.hyper.promoter)[c(2:5)], sep = ".")
+
+colnames(c786.200bp.hypo.promoter)[c(2:5)] <- paste("c786.200bp.hypo.promoter", colnames(c786.200bp.hypo.promoter)[c(2:5)], sep = ".")
+colnames(rcc4.200bp.hyper.all)[c(2:5)] <- paste("rcc4.200bp.hyper.all", colnames(rcc4.200bp.hyper.all)[c(2:5)], sep = ".")
+colnames(rcc4.200bp.hypo.all)[c(2:5)] <- paste("rcc4.200bp.hypo.all", colnames(rcc4.200bp.hypo.all)[c(2:5)], sep = ".")
+colnames(rcc4.200bp.hyper.promoter)[c(2:5)] <- paste("rcc4.200bp.hyper.promoter", colnames(rcc4.200bp.hyper.promoter)[c(2:5)], sep = ".")
+colnames(rcc4.200bp.hypo.promoter)[c(2:5)] <- paste("rcc4.200bp.hypo.promoter", colnames(rcc4.200bp.hypo.promoter)[c(2:5)], sep = ".")
+
+merge.8.files <- merge(
+  merge(
+    merge(
+      merge(
+        merge(
+          merge(
+            merge(c786.200bp.hyper.all, c786.200bp.hypo.all, by="TF.Name", all=T) ,
+            c786.200bp.hyper.promoter, by="TF.Name", all=T),
+          c786.200bp.hypo.promoter,  by="TF.Name", all=T),
+        rcc4.200bp.hyper.all ,by="TF.Name", all=T )
+      , rcc4.200bp.hypo.all, by="TF.Name", all=T),
+    rcc4.200bp.hyper.promoter,by="TF.Name", all=T)
+  , rcc4.200bp.hypo.promoter,by="TF.Name", all=T)
+
+
+##########################################################
+##########################################################
+###########analyse patients enrichment TF results files
+
+####four files have been obtained as previously.
+
+#first load all the four files
+#they are in patients folder
+size="200"
+patients.200bp.hyper.all <-  read.table( file=paste("enriched.TFs.",size,"bp.in.hypermethylated.probes.in.hypo.plus.hyperbg.patients.fdr.05.txt",sep=""),sep = "\t", header = T)
+patients.200bp.hypo.all <-  read.table( file=paste("enriched.TFs.",size,"bp.in.hypomethylated.probes.in.hypo.plus.hyperbg.patients.fdr.05.txt",sep=""),sep = "\t", header = T)
+
+promoter="promoter.2kb"
+patients.200bp.hyper.promoter <- read.table( file=paste("enriched.TFs.",size,"bp.in.hypermethylated.probes.in.hypo.plus.hyperbg.patients.",promoter,".fdr.05.txt",sep=""),sep = "\t", header = T)
+patients.200bp.hypo.promoter <- read.table( file=paste("enriched.TFs.",size,"bp.in.hypomethylated.probes.in.hypo.plus.hyperbg.patients.",promoter,".fdr.05.txt",sep=""),sep = "\t", header = T)
+
+
+#now we need to merge all the four files together by TF.Name
+
+
+##change cilumn names as uniquly identify the column from each file
+colnames(patients.200bp.hyper.all)[c(2:5)] <-paste("patients.200bp.hyper.all", colnames(patients.200bp.hyper.all)[c(2:5)], sep = ".")
+colnames(patients.200bp.hypo.all)[c(2:5)] <-paste("patients.200bp.hypo.all", colnames(patients.200bp.hypo.all)[c(2:5)], sep = ".")
+
+colnames(patients.200bp.hyper.promoter)[c(2:5)] <-paste("patients.200bp.hyper.promoter", colnames(patients.200bp.hyper.promoter)[c(2:5)], sep = ".")
+colnames(patients.200bp.hypo.promoter)[c(2:5)] <-paste("patients.200bp.hypo.promoter", colnames(patients.200bp.hypo.promoter)[c(2:5)], sep = ".")
+
+merge.patients <- merge(merge(merge(patients.200bp.hyper.all, patients.200bp.hyper.promoter, by="TF.Name"), patients.200bp.hypo.all, by="TF.Name" ),patients.200bp.hypo.promoter, by="TF.Name")
+
+
+
+##all hyper
+merge.patients.hyper.all <- merge(patients.200bp.hyper.all,patients.200bp.hyper.promoter, by="TF.Name" )
+
+merge.patients.hyper.all <- subset(merge.patients.hyper.all, patients.200bp.hyper.all.FDR <= 0.05)
+
+#promoter hyper
+
+merge.patients.hyper.promoter <- subset(patients.200bp.hyper.promoter, patients.200bp.hyper.promoter.FDR <= 0.05)
+
+merge.patients.hyper.promoter <- merge(patients.200bp.hyper.all,merge.patients.hyper.promoter, by="TF.Name" ,all.y=T)
+
+merge.patients.hyper.promoter <- subset(merge.patients.hyper.promoter, is.na(patients.200bp.hyper.all.FDR))
+
+
+
+
+###############cell lines merge with specific parts of patiens subsets
+temp <- merge.patients.hyper.all[c(1,2)]
+colnames(temp)[2] <- "col"
+cell.line.merge.with.patients.subsets.hyper.all <- merge(merge.patients, temp, by="TF.Name")
+cell.line.merge.with.patients.subsets.hyper.all <-  cell.line.merge.with.patients.subsets.hyper.all[c(1:dim(cell.line.merge.with.patients.subsets.hyper.all)[2]-1)]
+
+temp <- merge.patients.hyper.promoter[c(1,2)]
+colnames(temp)[2] <- "col"
+cell.line.merge.with.patients.subsets.hyper.promoter <- merge(merge.patients, temp, by="TF.Name")
+cell.line.merge.with.patients.subsets.hyper.promoter <- cell.line.merge.with.patients.subsets.hyper.promoter[c(1:dim(cell.line.merge.with.patients.subsets.hyper.promoter)[2]-1)]
+
+
+##all hypo
+merge.patients.hypo.all <- merge(patients.200bp.hypo.all,patients.200bp.hypo.promoter, by="TF.Name" )
+
+merge.patients.hypo.all <- subset(merge.patients.hypo.all, patients.200bp.hypo.all.FDR <= 0.05)
+
+#promoter hypo
+
+merge.patients.hypo.promoter <- subset(patients.200bp.hypo.promoter, patients.200bp.hypo.promoter.FDR <= 0.05)
+
+merge.patients.hypo.promoter <- merge(patients.200bp.hypo.all,merge.patients.hypo.promoter, by="TF.Name" ,all.y=T)
+
+merge.patients.hypo.promoter <- subset(merge.patients.hypo.promoter, is.na(patients.200bp.hypo.all.FDR))
+
+
+temp <- merge.patients.hypo.all[c(1,2)]
+colnames(temp)[2] <- "col"
+cell.line.merge.with.patients.subsets.hypo.all <- merge(merge.patients, temp, by="TF.Name")
+cell.line.merge.with.patients.subsets.hypo.all <- cell.line.merge.with.patients.subsets.hypo.all[c(1:dim(cell.line.merge.with.patients.subsets.hypo.all)[2]-1)]
+
+temp <- merge.patients.hypo.promoter[c(1,2)]
+colnames(temp)[2] <- "col"
+cell.line.merge.with.patients.subsets.hypo.promoter <- merge(merge.patients, temp, by="TF.Name")
+cell.line.merge.with.patients.subsets.hypo.promoter <- cell.line.merge.with.patients.subsets.hypo.promoter[c(1:dim(cell.line.merge.with.patients.subsets.hypo.promoter)[2]-1)]
+
+
+#check whether column names are queal or not
+all(colnames(cell.line.merge.with.patients.subsets.hyper.all) == colnames(cell.line.merge.with.patients.subsets.hyper.promoter))
+all(colnames(cell.line.merge.with.patients.subsets.hyper.all) == colnames(cell.line.merge.with.patients.subsets.hypo.promoter))
+all(colnames(cell.line.merge.with.patients.subsets.hyper.all) == colnames(cell.line.merge.with.patients.subsets.hypo.all))
+
+
+patiens.only.TFs.merge.by.four.files <- rbind(cell.line.merge.with.patients.subsets.hyper.all,cell.line.merge.with.patients.subsets.hyper.promoter,cell.line.merge.with.patients.subsets.hypo.all,cell.line.merge.with.patients.subsets.hypo.promoter)
+
+####merge 8 file merge with patients rbind file
+merge.8.files <- merge (merge.8.files, patiens.only.TFs.merge.by.four.files, by="TF.Name")
+
+
+
+
+
+
+
+
+###get TF name from filtering by FDR and merging
+##this will result four different tables
+#finally we have to rbind all together
+#hyper all of two celllines
+merge.TF.two.celllines.hyper.all <- subset(c786.200bp.hyper.all, c786.200bp.hyper.all.FDR <= 0.05)
+merge.TF.two.celllines.hyper.all <- merge(merge.TF.two.celllines.hyper.all, rcc4.200bp.hyper.all, by="TF.Name")
+merge.TF.two.celllines.hyper.all <- subset(merge.TF.two.celllines.hyper.all, rcc4.200bp.hyper.all.FDR <= 0.05)
+
+#merge with large matrix
+temp <- merge.TF.two.celllines.hyper.all[c(1,3)]
+colnames(temp)[2] <- "temp"
+merge.TF.two.celllines.hyper.all <- merge(temp, merge.8.files, by="TF.Name")
+#order by FDR
+merge.TF.two.celllines.hyper.all <-  merge.TF.two.celllines.hyper.all[order(merge.TF.two.celllines.hyper.all$c786.200bp.hyper.all.FDR),]
+
+
+#hypo all of two cell lines
+merge.TF.two.celllines.hypo.all <- subset(c786.200bp.hypo.all, c786.200bp.hypo.all.FDR <= 0.05)
+merge.TF.two.celllines.hypo.all <- merge(merge.TF.two.celllines.hypo.all, rcc4.200bp.hypo.all, by="TF.Name")
+merge.TF.two.celllines.hypo.all <- subset(merge.TF.two.celllines.hypo.all, rcc4.200bp.hypo.all.FDR <= 0.05)
+
+#merge with large matrix
+temp <- merge.TF.two.celllines.hypo.all[c(1,3)]
+colnames(temp)[2] <- "temp"
+merge.TF.two.celllines.hypo.all <- merge(temp, merge.8.files, by="TF.Name")
+#order by FDR
+merge.TF.two.celllines.hypo.all <-  merge.TF.two.celllines.hypo.all[order(merge.TF.two.celllines.hypo.all$c786.200bp.hypo.all.FDR),]
+
+
+#hyper promoter of two cell lines
+merge.TF.two.celllines.hyper.all.promo <- subset(c786.200bp.hyper.promoter, c786.200bp.hyper.promoter.FDR <= 0.05)
+merge.TF.two.celllines.hyper.all.promo <- merge(merge.TF.two.celllines.hyper.all.promo, rcc4.200bp.hyper.promoter, by="TF.Name")
+merge.TF.two.celllines.hyper.all.promo <- subset(merge.TF.two.celllines.hyper.all.promo, rcc4.200bp.hyper.promoter.FDR <= 0.05)
+
+#merge with large matrix
+temp <- merge.TF.two.celllines.hyper.all.promo[c(1,3)]
+colnames(temp)[2] <- "temp"
+merge.TF.two.celllines.hyper.all.promo <- merge(temp, merge.8.files, by="TF.Name")
+#order by FDR
+merge.TF.two.celllines.hyper.all.promo <-  merge.TF.two.celllines.hyper.all.promo[order(merge.TF.two.celllines.hyper.all.promo$c786.200bp.hyper.all.FDR),]
+
+temp<- merge.TF.two.celllines.hyper.all[c(1,2)]
+colnames(temp)[2] <- "temp"
+merge.TF.two.celllines.hyper.all.promo <- merge(temp,
+                                                merge.TF.two.celllines.hyper.all.promo, by="TF.Name", all=T)
+
+colnames(merge.TF.two.celllines.hyper.all.promo)[2] <- "col2"
+merge.TF.two.celllines.hyper.all.promo <- subset(merge.TF.two.celllines.hyper.all.promo, is.na(merge.TF.two.celllines.hyper.all.promo$col2))
+
+
+#hypo promoter of two cell lines
+merge.TF.two.celllines.hypo.all.promo <- subset(c786.200bp.hypo.promoter, c786.200bp.hypo.promoter.FDR <= 0.05)
+merge.TF.two.celllines.hypo.all.promo <- merge(merge.TF.two.celllines.hypo.all.promo, rcc4.200bp.hypo.promoter, by="TF.Name")
+merge.TF.two.celllines.hypo.all.promo <- subset(merge.TF.two.celllines.hypo.all.promo, rcc4.200bp.hypo.promoter.FDR <= 0.05)
+
+#merge with large matrix
+temp <- merge.TF.two.celllines.hypo.all.promo[c(1,3)]
+colnames(temp)[2] <- "temp"
+merge.TF.two.celllines.hypo.all.promo <- merge(temp, merge.8.files, by="TF.Name")
+#order by FDR
+merge.TF.two.celllines.hypo.all.promo <-  merge.TF.two.celllines.hypo.all.promo[order(merge.TF.two.celllines.hypo.all.promo$c786.200bp.hypo.all.FDR),]
+
+temp <- merge.TF.two.celllines.hypo.all[c(1,2)]
+colnames(temp)[2] <- "temp"
+merge.TF.two.celllines.hypo.all.promo <- merge(temp,
+                                               merge.TF.two.celllines.hypo.all.promo, by="TF.Name", all=T)
+
+colnames(merge.TF.two.celllines.hypo.all.promo)[2] <- "col2"
+merge.TF.two.celllines.hypo.all.promo <- subset(merge.TF.two.celllines.hypo.all.promo, is.na(merge.TF.two.celllines.hypo.all.promo$col2))
+
+
+
+#promoter 2k arinna all ekak arinna one rbind karaddi
+
+merge.TF.two.celllines.hyper.all <- merge.TF.two.celllines.hyper.all[c(1,4:dim(merge.TF.two.celllines.hyper.all)[2])]
+merge.TF.two.celllines.hypo.all <- merge.TF.two.celllines.hypo.all[c(1,4:dim(merge.TF.two.celllines.hypo.all)[2])]
+merge.TF.two.celllines.hypo.all.promo <- merge.TF.two.celllines.hypo.all.promo[c(1,5:dim(merge.TF.two.celllines.hypo.all.promo)[2])]
+merge.TF.two.celllines.hyper.all.promo <- merge.TF.two.celllines.hyper.all.promo[c(1,5:dim(merge.TF.two.celllines.hyper.all.promo)[2])]
+
+#check whether column names are queal or not
+all(colnames(merge.TF.two.celllines.hyper.all) == colnames(merge.TF.two.celllines.hypo.all))
+all(colnames(merge.TF.two.celllines.hyper.all) == colnames(merge.TF.two.celllines.hypo.all.promo))
+all(colnames(merge.TF.two.celllines.hyper.all) == colnames(merge.TF.two.celllines.hyper.all.promo))
+
+####open three(can be 4) files, reorder columns and then rbind them
+
+#ready for the heatmap
+
+
+
+final.matrix.for.complex.heatmap.TF.enrichment.and.expression <- rbind(merge.TF.two.celllines.hyper.all,
+                                                                       merge.TF.two.celllines.hypo.all,
+                                                                       merge.TF.two.celllines.hyper.all.promo,
+                                                                       merge.TF.two.celllines.hypo.all.promo )
+
+select(final.matrix.for.complex.heatmap.TF.enrichment.and.expression, "TF.Name") %>% unique() %>% dim
+#write.csv(final.matrix.for.complex.heatmap.TF.enrichment.and.expression, file=paste("final.matrix.for.complex.heatmap.TF.enrichment.and.expression.csv",sep=""))
+
+###reshape messy data frame in to ggplot required tidy dataframe. column names in to one variable values
+###stacking P values of all the columns in to one column
+d.matrix <- final.matrix.for.complex.heatmap.TF.enrichment.and.expression
+d.matrix.tidy.P<- data.frame(d.matrix[c(1,11,15,19,23,27,31,35,39,43,47,51,55)])
+d.matrix.tidy.P <- d.matrix.tidy.P[c(1,2,4,3,5,6,8,7,9,10,11,12,13)]
+tf.vhl <-fread("final.d.matrix.for.heatmap.tf_names.txt")
+
+d.matrix.tidy.P <- merge(d.matrix.tidy.P, tf.vhl, by.x="TF.Name", by.y="TF.name")
+d.matrix.tidy.P$`Enriched in RCC4`<- NULL
+
+d.matrix.tidy.P <- d.matrix.tidy.P[,c(1,2,3,6,7,12,13,4,5,8:11)]
+d.matrix.tidy.P <- melt(d.matrix.tidy.P, id=c(1))
+
+###creating the fold chnage by enrichment counts
+#I have to manually run the script in the server and get these values since I havent add in to the automatic script
+
+rcc4.200bp.all.bg <- 25442
+rcc4.200bp.hyper.all.success.bg <- 19704
+rcc4.200bp.hypo.all.success.bg <- rcc4.200bp.all.bg - rcc4.200bp.hyper.all.success.bg
+
+
+rcc4.200bp.promoter.bg <- 6629
+rcc4.200bp.hyper.promoter.success.bg <- 4597
+rcc4.200bp.hypo.promoter.success.bg <- rcc4.200bp.promoter.bg - rcc4.200bp.hyper.promoter.success.bg
+
+#c786-O
+
+c786.200bp.all.bg <- 34766
+c786.200bp.hyper.all.success.bg <- 18386
+c786.200bp.hypo.all.success.bg <- c786.200bp.all.bg - c786.200bp.hyper.all.success.bg
+
+
+c786.200bp.promoter.bg <- 10726
+c786.200bp.hyper.promoter.success.bg <- 5098
+c786.200bp.hypo.promoter.success.bg <- c786.200bp.promoter.bg - c786.200bp.hyper.promoter.success.bg
+
+#patients
+patients.200bp.all.bg <- 7718
+#patients.200bp.all.bg <- 7912
+patients.200bp.hyper.all.success.bg <- 2404
+#patients.200bp.hyper.all.success.bg <- 2455
+patients.200bp.hypo.all.success.bg <- patients.200bp.all.bg - patients.200bp.hyper.all.success.bg
+
+
+patients.200bp.promoter.bg <- 1488
+#patients.200bp.promoter.bg <- 1532
+patients.200bp.hyper.promoter.success.bg <- 663
+#patients.200bp.hyper.promoter.success.bg <- 683
+patients.200bp.hypo.promoter.success.bg <- patients.200bp.promoter.bg - patients.200bp.hyper.promoter.success.bg
+
+
+
+
+d.matrix.tidy.fold <- d.matrix[c(1)]
+
+d.matrix.tidy.fold$c786.hyper.all.fold <- log2((d.matrix$c786.200bp.hyper.all.count.hypermethylated.probes.for.TF/
+                                                  d.matrix$c786.200bp.hyper.all.count.all.probes.for.TF)/( (c786.200bp.hyper.all.success.bg-d.matrix$c786.200bp.hyper.all.count.hypermethylated.probes.for.TF)
+                                                                                                           /
+                                                                                                             (c786.200bp.hyper.all.success.bg+c786.200bp.hypo.all.success.bg-d.matrix$c786.200bp.hyper.all.count.all.probes.for.TF))
+
+)
+
+
+#d.matrix.tidy.fold$c786.hyper.all.fold <- log2(d.matrix$c786.200bp.hyper.all.count.hypermethylated.probes.for.TF/
+#       (d.matrix$c786.200bp.hyper.all.count.all.probes.for.TF-d.matrix$c786.200bp.hyper.all.count.hypermethylated.probes.for.TF))
+
+d.matrix.tidy.fold$c786.hyper.promoter.fold <- log2((d.matrix$c786.200bp.hyper.promoter.count.hypermethylated.probes.for.TF/
+                                                       d.matrix$c786.200bp.hyper.promoter.count.all.probes.for.TF)/
+                                                      ((c786.200bp.hyper.promoter.success.bg-d.matrix$c786.200bp.hyper.promoter.count.hypermethylated.probes.for.TF)
+                                                       /
+                                                         (c786.200bp.hyper.promoter.success.bg+c786.200bp.hypo.promoter.success.bg-d.matrix$c786.200bp.hyper.promoter.count.all.probes.for.TF)))
+
+
+d.matrix.tidy.fold$c786.hypo.all.fold <- log2((d.matrix$c786.200bp.hypo.all.count.hypomethylated.probes.for.TF/
+                                                 d.matrix$c786.200bp.hypo.all.count.all.probes.for.TF)/
+                                                ((c786.200bp.hypo.all.success.bg-d.matrix$c786.200bp.hypo.all.count.hypomethylated.probes.for.TF)/(c786.200bp.hypo.all.success.bg+
+                                                                                                                                                     c786.200bp.hyper.all.success.bg-d.matrix$c786.200bp.hypo.all.count.all.probes.for.TF)))
+
+
+d.matrix.tidy.fold$c786.hypo.promoter.fold <- log2((d.matrix$c786.200bp.hypo.promoter.count.hypomethylated.probes.for.TF/
+                                                      d.matrix$c786.200bp.hypo.promoter.count.all.probes.for.TF)/
+                                                     ((c786.200bp.hypo.promoter.success.bg-d.matrix$c786.200bp.hypo.promoter.count.hypomethylated.probes.for.TF)/(c786.200bp.hypo.promoter.success.bg+c786.200bp.hyper.promoter.success.bg-d.matrix$c786.200bp.hypo.promoter.count.all.probes.for.TF)))
+
+#rcc4
+d.matrix.tidy.fold$rcc4.hyper.all.fold <- log2((d.matrix$rcc4.200bp.hyper.all.count.hypermethylated.probes.for.TF/
+                                                  d.matrix$rcc4.200bp.hyper.all.count.all.probes.for.TF)/( (rcc4.200bp.hyper.all.success.bg-d.matrix$rcc4.200bp.hyper.all.count.hypermethylated.probes.for.TF)
+                                                                                                           /
+                                                                                                             (rcc4.200bp.hyper.all.success.bg+rcc4.200bp.hypo.all.success.bg-d.matrix$rcc4.200bp.hyper.all.count.all.probes.for.TF))
+
+)
+
+
+#d.matrix.tidy.fold$rcc4.hyper.all.fold <- log2(d.matrix$rcc4.200bp.hyper.all.count.hypermethylated.probes.for.TF/
+#       (d.matrix$rcc4.200bp.hyper.all.count.all.probes.for.TF-d.matrix$rcc4.200bp.hyper.all.count.hypermethylated.probes.for.TF))
+
+d.matrix.tidy.fold$rcc4.hyper.promoter.fold <- log2((d.matrix$rcc4.200bp.hyper.promoter.count.hypermethylated.probes.for.TF/
+                                                       d.matrix$rcc4.200bp.hyper.promoter.count.all.probes.for.TF)/
+                                                      ((rcc4.200bp.hyper.promoter.success.bg-d.matrix$rcc4.200bp.hyper.promoter.count.hypermethylated.probes.for.TF)
+                                                       /
+                                                         (rcc4.200bp.hyper.promoter.success.bg+rcc4.200bp.hypo.promoter.success.bg-d.matrix$rcc4.200bp.hyper.promoter.count.all.probes.for.TF)))
+
+
+d.matrix.tidy.fold$rcc4.hypo.all.fold <- log2((d.matrix$rcc4.200bp.hypo.all.count.hypomethylated.probes.for.TF/
+                                                 d.matrix$rcc4.200bp.hypo.all.count.all.probes.for.TF)/
+                                                ((rcc4.200bp.hypo.all.success.bg-d.matrix$rcc4.200bp.hypo.all.count.hypomethylated.probes.for.TF)/(rcc4.200bp.hypo.all.success.bg+
+                                                                                                                                                     rcc4.200bp.hyper.all.success.bg-d.matrix$rcc4.200bp.hypo.all.count.all.probes.for.TF)))
+
+
+d.matrix.tidy.fold$rcc4.hypo.promoter.fold <- log2((d.matrix$rcc4.200bp.hypo.promoter.count.hypomethylated.probes.for.TF/
+                                                      d.matrix$rcc4.200bp.hypo.promoter.count.all.probes.for.TF)/
+                                                     ((rcc4.200bp.hypo.promoter.success.bg-d.matrix$rcc4.200bp.hypo.promoter.count.hypomethylated.probes.for.TF)/(rcc4.200bp.hypo.promoter.success.bg+rcc4.200bp.hyper.promoter.success.bg-d.matrix$rcc4.200bp.hypo.promoter.count.all.probes.for.TF)))
+
+
+
+d.matrix.tidy.fold$patients.hyper.all.fold <- log2((d.matrix$patients.200bp.hyper.all.count.hypermethylated.probes.for.TF/
+                                                      d.matrix$patients.200bp.hyper.all.count.all.probes.for.TF)/( (patients.200bp.hyper.all.success.bg-d.matrix$patients.200bp.hyper.all.count.hypermethylated.probes.for.TF)
+                                                                                                                   /
+                                                                                                                     (patients.200bp.hyper.all.success.bg+patients.200bp.hypo.all.success.bg-d.matrix$patients.200bp.hyper.all.count.all.probes.for.TF))
+
+)
+
+
+#d.matrix.tidy.fold$patients.hyper.all.fold <- log2(d.matrix$patients.200bp.hyper.all.count.hypermethylated.probes.for.TF/
+#       (d.matrix$patients.200bp.hyper.all.count.all.probes.for.TF-d.matrix$patients.200bp.hyper.all.count.hypermethylated.probes.for.TF))
+
+d.matrix.tidy.fold$patients.hyper.promoter.fold <- log2((d.matrix$patients.200bp.hyper.promoter.count.hypermethylated.probes.for.TF/
+                                                           d.matrix$patients.200bp.hyper.promoter.count.all.probes.for.TF)/
+                                                          ((patients.200bp.hyper.promoter.success.bg-d.matrix$patients.200bp.hyper.promoter.count.hypermethylated.probes.for.TF)
+                                                           /
+                                                             (patients.200bp.hyper.promoter.success.bg+patients.200bp.hypo.promoter.success.bg-d.matrix$patients.200bp.hyper.promoter.count.all.probes.for.TF)))
+
+
+d.matrix.tidy.fold$patients.hypo.all.fold <- log2((d.matrix$patients.200bp.hypo.all.count.hypomethylated.probes.for.TF/
+                                                     d.matrix$patients.200bp.hypo.all.count.all.probes.for.TF)/
+                                                    ((patients.200bp.hypo.all.success.bg-d.matrix$patients.200bp.hypo.all.count.hypomethylated.probes.for.TF)/(patients.200bp.hypo.all.success.bg+
+                                                                                                                                                                 patients.200bp.hyper.all.success.bg-d.matrix$patients.200bp.hypo.all.count.all.probes.for.TF)))
+
+
+d.matrix.tidy.fold$patients.hypo.promoter.fold <- log2((d.matrix$patients.200bp.hypo.promoter.count.hypomethylated.probes.for.TF/
+                                                          d.matrix$patients.200bp.hypo.promoter.count.all.probes.for.TF)/
+                                                         ((patients.200bp.hypo.promoter.success.bg-d.matrix$patients.200bp.hypo.promoter.count.hypomethylated.probes.for.TF)/(patients.200bp.hypo.promoter.success.bg+patients.200bp.hyper.promoter.success.bg-d.matrix$patients.200bp.hypo.promoter.count.all.probes.for.TF)))
+
+
+library(reshape2 )
+
+
+d.matrix.tidy.fold <- merge(d.matrix.tidy.fold, tf.vhl, by.x="TF.Name", by.y="TF.name")
+d.matrix.tidy.fold$`Enriched in RCC4`<- NULL
+d.matrix.tidy.fold <- d.matrix.tidy.fold[,c(1,2,3,6,7,12,13,4,5,8:11)]
+d.matrix.tidy.fold <- melt(d.matrix.tidy.fold, id=c(1))
+
+###join two data frames
+
+d.matrix <- data.frame(d.matrix.tidy.P, d.matrix.tidy.fold)
+d.matrix <- d.matrix[c(1:3,6)]
+colnames(d.matrix) <- c("TF.Name", "cell.methyl.region", "P.Value","log2FC")
+d.matrix$log2FC[d.matrix$log2FC < 0] <- 0
+#d.matrix <- read.csv(file="final.matrix.for.complex.heatmap.TF.enrichment.and.expression.tidy.csv", sep = ";")
+d.matrix$P.Value <- log(d.matrix$P.Value)
+d.matrix$P.Value[d.matrix$P.Value < -20] <- -20
+#final.matrix.for.complex.heatmap.TF.enrichment.and.expression[c(2)]
+
+TF_order_hypo <- d.matrix
+TF_order_hyper <- d.matrix
+TF_order_hypo <- subset(TF_order, cell.methyl.region=="patients.200bp.hypo.all.P.Value")
+TF_order_hypo <- TF_order_hypo[order(-TF_order_hypo$log2FC),]
+
+TF_order_hypo <- TF_order_hypo[1:13,1]
+
+TF_order_hyper <- subset(TF_order, cell.methyl.region=="patients.200bp.hyper.all.P.Value" )
+TF_order_hyper <- TF_order_hyper[order(TF_order_hyper$log2FC),]
+
+TF_order_hyper <- TF_order_hyper[14:27,1]
+
+TF_order <- rbind(data.frame(TF=TF_order_hypo), data.frame(TF=TF_order_hyper))
+
+
+#cell.line.merge.with.patients <- merge(final.matrix.for.complex.heatmap.TF.enrichment.and.expression, merge.patients, by="TF.Name")
+
+
+
+
+
+library(data.table)
+library(dplyr)
+library(ggplot2)
+#d.matrix <- fread("d.matrix.for.gabrielle.txt")
+
+length_TF <- d.matrix %>% select("TF.Name") %>% unique()
+#create the heatmap with ggplot2
+aa <- ggplot(d.matrix, size = d.matrix$log2FC, aes(x = d.matrix$cell.methyl.region, size = d.matrix$log2FC ,
+                                             y= factor(d.matrix$TF.Name , levels = rev(as.character(TF_order$TF))))) +
+  geom_point(aes(colour =d.matrix$P.Value)) +
+  scale_colour_gradient("P-Value of\nenrichment", low = "red",  high="yellow") +
+  scale_size("log 2 fold change\n of enrichment",range = c(0, 5))+
+  guides(size = guide_legend(override.aes = list(fill = "red")))+
+  theme_bw()+
+  theme(legend.key.size = unit(1.5, 'lines'), text = element_text(size=15),
+        axis.text.x=element_text(colour="white"),axis.text = element_text( size=14),
+        axis.title.x=element_blank(),axis.title.y=element_blank(),legend.position="left",axis.ticks.length=unit(.25, "cm"),
+        axis.line = element_line(colour = "black"))
+  #theme_minimal()
+
+pdf(file="graphs/fig6_vhl_TFs.pdf", height=5,width=4.5)
+aa
+
+dev.off()
+```
+

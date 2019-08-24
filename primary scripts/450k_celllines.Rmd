@@ -1,0 +1,431 @@
+---
+title: "Finds differentially methylated CpGs from 450k arrays"
+author: "Pubudu Nawarathna"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+#cellines : RCC4 and 786-O
+```{r}
+
+
+ #module load gcc/5.4.0 r-bundle-bioconductor/3.4 
+ 
+library(gqMicroarrays)
+library(gdata)
+library(stringr)
+library(pheatmap)
+library(minfi)
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19) 
+library(IlluminaHumanMethylation450kmanifest)
+library(magrittr)
+library(dplyr)
+library(limma)
+options(stringsAsFactors=F)
+
+lfc = 1 ; fdr = 0.05 ; p.value = 0.05
+illumina.sheets = list.files("450k_methylation/cellines",pattern=".csv$",recursive=T,full.names=T)
+
+
+#########################
+############################ Array / Sample Annotation
+
+#### Read illumina sheets, array annotations, merge them
+pdata = mapply(function(sheet){
+	ann = read.metharray.sheet(dirname(sheet))
+	ann = ann[ ann[["Basename"]] != "character(0)",] # arrays from another project
+	ann[["SampleSheet"]] = sheet
+	ann[["Sample_Well_row"]] =  substr(ann[["Sample_Well"]],1,1)
+	ann[["Sample_Well_col"]] =  as.numeric(substr(ann[["Sample_Well"]],2,3))
+	ann[["Slide"]] = as.character(ann[["Slide"]])
+	ann[["ArrayRow"]] = substr(ann[["Array"]],1,3)
+	ann[["ArrayCol"]] = substr(ann[["Array"]],4,6)
+	ann[["ArrayID"]]  = basename( ann[["Basename"]] )
+	return(ann)
+},illumina.sheets,SIMPLIFY=F)
+
+
+#pdata = do.call(rbind,pdata) # identical(colnames(pdata[[1]]),colnames(pdata[[2]]))
+rownames(pdata) = pdata[["ArrayID"]]
+pdata$Sample_Name = gdata::trim(pdata$Sample_Name)
+
+# Variables
+df = read.xls("450k_methylation/cellines/Ohh_Toronto_methylation sample IDs_FL.xls",check.names=F) # idiots in the lab label things inconsistently as usual
+rownames(df) = df[,4]
+all(pdata$Sample_Name %in% rownames(df))
+pdata[["Class"]] = df[pdata[["Sample_Name"]],1]
+#pdata = pdata[pdata$Class != "ignore",]
+pdata$Class = gdata::trim(pdata$Class)
+pdata$Class = gsub("^RCC4mock$", "RCC4mock 21%",pdata$Class)
+pdata$Class = gsub("%","pct",pdata$Class)
+pdata$Class = gsub(" ","_",pdata$Class)
+pdata$Class = gsub("^786","c786",pdata$Class)
+pdata$Class[pdata$Project=="siDNMT1"] = paste("RCC4VHL", gsub("_.$","",pdata$Sample_Name[pdata$Project=="siDNMT1"]) ,sep="_")
+sort(table(pdata$Class)) 
+
+# SampleID: biological replicates
+pdata$SampleID = pdata[["Sample_Name"]]
+rm(df)
+
+
+
+#########################
+############################ Read the raw data
+raw = read.metharray.exp(targets = pdata )
+```
+
+
+
+
+##### Quality Control following minfi
+
+```{r}
+
+# # Objects
+mset.raw = preprocessRaw(raw)
+fData(mset.raw) = fdata[featureNames(mset.raw),]
+mset.raw = addQC(mset.raw, getQC(mset.raw))
+grset.raw = mset.raw %>% ratioConvert %>% mapToGenome
+grset.raw = addSex(grset.raw)
+grset.raw = addSnpInfo(grset.raw)
+
+# Median intensities plots + failed probes + what else on the plot? + color by slide or position or what noch
+dat = as.data.frame(pData(grset.raw))
+p = ggplot(data=dat,aes(x=mMed,y=uMed)) + geom_point(aes(color=Project),alpha=0.8) +
+	 theme(aspect.ratio=1)+
+	 geom_text(aes(label=SampleID),size=0.5)
+png("qc_uM_mM_scatterplot.png",res=600,width=5,height=5,units="in");print(p);dev.off()
+
+# Sample well median intensity (screw that, it's a gradient problem)
+dat = as.data.frame(pData(grset.raw))
+dat$desc = paste(dat$Slide,order(dat$Slide),dat$Array,dat$SampleID,sep='\n')
+p = ggplot(data=dat,aes(y=Sample_Well_row,x=Sample_Well_col))+ geom_point(aes(size=mMed+uMed,color=ArrayRow))+facet_wrap(~Sample_Plate)+theme(aspect.ratio=1)+
+	  scale_x_continuous(breaks=c(1:12)) + geom_text( aes(label=desc),size=0.5 ) + geom_line(aes(group=Slide),alpha=0.5,color='grey')
+png("qc_totM_sample_wells.png",res=600,width=10,height=10,units="in");print(p);dev.off()
+
+# Failed probes analysis (slow)
+dat = as.data.frame(pData(raw))
+dat$failed.detection.rate = apply(detectionP(raw),2,function(co){mean(co>0.01)})
+dat$desc = paste(dat$ArrayID,dat$SampleID)
+p = ggplot(data=dat,aes(x=desc,y=failed.detection.rate))+geom_bar(stat='identity')+ggtitle("")+ylab("Fraction of detection P > 0.01")+
+	ylim(c(0,0.01))+coord_flip()
+	# theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+png("qc_failed_probes.png",res=600,width=7,height=20,units="in");print(p);dev.off()
+
+# Minfi standard controls
+qcReport(raw,  pdf = "qc_minfi_qcReport.pdf")
+pdf("qc_minfi_qcReport_controlStripPlot.pdf",width=5,height=30)
+controlStripPlot(raw,controls=c("BISULFITE CONVERSION I","BISULFITE CONVERSION II","EXTENSION","HYBRIDIZATION","NEGATIVE","NON-POLYMORPHIC","NORM_A","NORM_C","NORM_G","NORM_T","SPECIFICITY I","SPECIFICITY II","STAINING","TARGET REMOVAL")[1:11])
+dev.off()
+
+#QC plot
+qc <- getQC(mset.raw )
+pdf("QC plot.pdf",width=8,height=8)
+plotQC(qc)
+dev.off()
+
+# Total signal boxplot (slow)
+dat = getCN(grset.raw)
+colnames(dat) =  paste(pData(grset.raw)$ArrayID,pData(grset.raw)$SampleID)
+png("qc_total_signal_boxplots.png",res=150,width=20,height=5,units='in')
+boxplot(dat,col= color.me(pData(grset.raw)$Slide),main="Total Methylated Signal (colored by slide)",las=2)
+dev.off()
+
+# Generic mds
+dat = grset.raw[ ! seqnames(grset.raw) %in% c("chrY","chrX")   ]
+dat = ExpressionSet(getCN(dat),phenoData=AnnotatedDataFrame(as.data.frame(pData(dat))))
+exprs(dat)[!is.finite(exprs(dat))] = 0
+fData(dat)$sd = apply(exprs(dat),1,sd)
+dat = dat[fData(dat)$sd>=1.2,]
+dat = cbind(as.data.frame(cmdscale(euc(dat))),pData(dat))
+png("qc_tot_mds_topsd.png",res=1000,width=10,height=10,units='in')
+print(
+	ggplot(data=dat,aes(x=V1,y=V2))+geom_point(aes(color=Class,shape=Project),alpha=0.8)+theme(aspect.ratio=1)+ggtitle("all probes")+
+	geom_text(aes(label=SampleID),size=0.3)
+)
+dev.off()
+
+# MDS on SNPs check
+dat = getSnpBeta(raw)
+dat = ExpressionSet(dat,phenoData=AnnotatedDataFrame(as.data.frame(pData(raw))))
+dat = cbind( prcomp(dat)$rotation[,c(1:2)] ,pData(dat) )
+png("qc_betas_mds_SNPs.png",res=1000,width=10,height=10,units='in')
+print(
+	ggplot(data=dat,aes(x=PC1,y=PC2))+geom_point(aes(color=Project),alpha=0.8)+theme(aspect.ratio=1)+ggtitle("SNPs")+
+	geom_text(aes(label=SampleID),size=0.3)
+)
+dev.off()
+
+dat = getSnpBeta(raw)
+colnames(dat) = make.unique(pData(raw)$SampleID)
+dat = as.dendrogram(hclust(cor.dist(t(dat))))
+png("qc_hclust_betas_SNPs.png",res=300,width=50,height=10,units='in')
+plot(dat, main="SNPs beta values cor dist")
+dev.off()
+
+# Other QC from vignette statt tutorial
+rm(mset.raw, grset.raw, qc, p,dat,fit,fit2,top,x,cont.matrix,Tumor)
+gc()
+
+
+
+#############minfi beta plot
+
+
+phenoData <- pData(raw)
+pdf("beta density plot-rcc4 and 786.pdf",width=8,height=8)
+densityPlot(mset.raw, sampGroups = phenoData$Sample_Group)
+dev.off()
+
+#########################
+############################ Preprocess: Remove outliers, normalize, adjust batch ,average replicates, prepare eset objects
+RGset = raw
+
+### normalization + drop SNPs
+message("Normalizing...")
+grset = RGset %>% preprocessFunnorm %>%  addSex %>% addSnpInfo %>% dropLociWithSnps
+
+
+#grset = RGset %>% preprocessSWAN %>% addQC(., getQC(.)) %>% ratioConvert %>% mapToGenome %>% addSex %>% addSnpInfo %>% dropLociWithSnps
+
+```
+
+
+###  Differential methylation Analysis
+
+
+```{r}
+
+
+#do again
+# Define data (standard version)
+eset = ExpressionSet( getM(grset), phenoData=AnnotatedDataFrame(data.frame(pData(grset),check.names=F)), featureData=AnnotatedDataFrame( fdata[featureNames(grset),]) )
+
+# Design
+Class = pData(eset)$Class
+design= model.matrix(~ -1+Class)
+rownames(design)  = sampleNames(eset)
+colnames(design) = gsub("^Class","",colnames(design))
+
+# Fit!
+fit = lmFit(eset,design)
+
+	
+	 coefs = c(
+	"c786VHL-c786mock",
+	
+	"RCC4VHL_21pct-RCC4mock_21pct"
+	
+	
+	) %>% unique
+
+cont.matrix = makeContrasts(contrasts = coefs, levels = design)
+fit2 = contrasts.fit(fit, cont.matrix)
+fit2 = eBayes(fit2)
+fit2$cont.matrix =  cont.matrix
+fit2$involved.arrays = retrieve.involved.arrays(fit2)
+fit2$variables="Class"
+
+
+# get the 450k annotation data
+ann450k = getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+
+# get the table of results for the first contrast (MOCK - VHL)
+ann450kSub <- ann450k[match(rownames(eset),ann450k$Name),c(1:4,12:19,24:ncol(ann450k))]
+coeff = 2
+DMPs <- topTable(fit2,  num=Inf, coef=coeff, genelist=ann450kSub, adjust.method='BH')
+
+
+
+
+#######get difference from beta values and add that logfc  column to toptable
+eset = ExpressionSet( getBeta(grset), phenoData=AnnotatedDataFrame(data.frame(pData(grset),check.names=F)), featureData=AnnotatedDataFrame( fdata[featureNames(grset),]) )
+
+
+# Design
+Class = pData(eset)$Class
+design= model.matrix(~ -1+Class)
+rownames(design)  = sampleNames(eset)
+colnames(design) = gsub("^Class","",colnames(design))
+
+# Fit!
+fit = lmFit(eset,design)
+
+	
+	 coefs = c(
+	"c786VHL-c786mock",
+	
+	"RCC4VHL_21pct-RCC4mock_21pct"
+	
+	
+	) %>% unique
+
+cont.matrix = makeContrasts(contrasts = coefs, levels = design)
+fit2 = contrasts.fit(fit, cont.matrix)
+fit2 = eBayes(fit2)
+fit2$cont.matrix =  cont.matrix
+fit2$involved.arrays = retrieve.involved.arrays(fit2)
+fit2$variables="Class"
+
+ann450kSub <- ann450k[match(rownames(eset),ann450k$Name),c(1:4,12:19,24:ncol(ann450k))]
+
+DMPs.beta <- topTable(fit2,  num=Inf, coef=coeff, genelist=ann450kSub, adjust.method='BH')
+DMPs.beta <- DMPs.beta[,c(4,23)]
+
+colnames(DMPs.beta) <- c("Name","logFCBeta")
+
+DMPs <-  merge(DMPs,DMPs.beta)
+if(coeff==1){
+cellline="c786.21"
+} else{
+cellline="RCC4"
+}
+##change coeeficient and create files for rcc4 and 786
+
+write.table(DMPs, file=paste("DMPs.merge.",cellline,".csv", sep=""), sep=",", row.names=T)
+#write.table(DMPs, file=paste("DMPs.merge.before.overlap.",cellline,".csv", sep=""), sep=",", row.names=T)
+
+
+coeff = 1
+DMPs <- topTable(fit2,  num=Inf, coef=coeff, genelist=ann450kSub, adjust.method='BH')
+
+
+
+
+#######get difference from beta values and add that logfc  column to toptable
+eset = ExpressionSet( getBeta(grset), phenoData=AnnotatedDataFrame(data.frame(pData(grset),check.names=F)), featureData=AnnotatedDataFrame( fdata[featureNames(grset),]) )
+
+
+# Design
+Class = pData(eset)$Class
+design= model.matrix(~ -1+Class)
+rownames(design)  = sampleNames(eset)
+colnames(design) = gsub("^Class","",colnames(design))
+
+# Fit!
+fit = lmFit(eset,design)
+
+	
+	 coefs = c(
+	"c786VHL-c786mock",
+	
+	"RCC4VHL_21pct-RCC4mock_21pct"
+	
+	
+	) %>% unique
+
+cont.matrix = makeContrasts(contrasts = coefs, levels = design)
+fit2 = contrasts.fit(fit, cont.matrix)
+fit2 = eBayes(fit2)
+fit2$cont.matrix =  cont.matrix
+fit2$involved.arrays = retrieve.involved.arrays(fit2)
+fit2$variables="Class"
+
+ann450kSub <- ann450k[match(rownames(eset),ann450k$Name),c(1:4,12:19,24:ncol(ann450k))]
+
+DMPs.beta <- topTable(fit2,  num=Inf, coef=coeff, genelist=ann450kSub, adjust.method='BH')
+DMPs.beta <- DMPs.beta[,c(4,23)]
+
+colnames(DMPs.beta) <- c("Name","logFCBeta")
+
+DMPs <-  merge(DMPs,DMPs.beta)
+if(coeff==1){
+cellline="c786.21"
+} else{
+cellline="RCC4"
+}
+##change coeeficient and create files for rcc4 and 786
+
+write.table(DMPs, file=paste("DMPs.merge.",cellline,".csv", sep=""), sep=",", row.names=T)
+#write.table(DMPs, file=paste("DMPs.merge.before.overlap.",cellline,".csv", sep=""), sep=",", row.names=T)
+
+
+```
+
+###patients
+```{r}
+
+
+illumina.sheets = list.files("450k_methylation/patients",pattern=".csv$",recursive=T,full.names=T)
+
+pdata = mapply(function(sheet){
+	# sheet = illumina.sheets[2]
+	ann = read.metharray.sheet(dirname(sheet))
+	ann = ann[ ann[["Basename"]] != "character(0)",] # arrays from another project
+	ann[["SampleSheet"]] = sheet
+	ann[["Sample_Well_row"]] =  substr(ann[["Sample_Well"]],1,1)
+	ann[["Sample_Well_col"]] =  as.numeric(substr(ann[["Sample_Well"]],2,3))
+	ann[["Slide"]] = as.character(ann[["Slide"]])
+	ann[["ArrayRow"]] = substr(ann[["Array"]],1,3)
+	ann[["ArrayCol"]] = substr(ann[["Array"]],4,6)
+	ann[["ArrayID"]]  = basename( ann[["Basename"]] )
+	return(ann)
+},illumina.sheets,SIMPLIFY=F)
+
+
+
+#pdata = do.call(rbind,pdata) # identical(colnames(pdata[[1]]),colnames(pdata[[2]]))
+rownames(pdata) = pdata[["ArrayID"]]
+pdata$Sample_Name = gdata::trim(pdata$Sample_Name)
+
+####select only four patients which have wgbs data
+#pdata <- pdata[pdata$Patient=="LR380" | pdata$Patient=="LR354" | pdata$Patient=="LR398" | pdata$Patient=="LR400",]
+
+
+fdata = getAnnotation(read.metharray.exp(targets = pdata))
+probes = makeGRangesFromDataFrame(DataFrame(fdata,start=fdata$pos,end=fdata$pos),  keep.extra.columns=TRUE)
+
+
+fdata = data.frame(fdata,check.names=F)
+raw = read.metharray.exp(targets = pdata )
+RGset = raw
+grset = RGset %>% preprocessFunnorm %>%  addSex %>% addSnpInfo %>% dropLociWithSnps
+#https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4283580/#Sec16
+
+eset = ExpressionSet( getM(grset), phenoData=AnnotatedDataFrame(data.frame(pData(grset),check.names=F)), featureData=AnnotatedDataFrame( fdata[featureNames(grset),]) )
+
+# Design
+Class <- factor(pData(eset)$Sample_Group, levels=c("NL","TU"))
+#Patient = pData(eset)$Patient
+#SibShip=patient
+Patient <- factor(pData(eset)$Patient)
+#contMatrix <- makeContrasts(c("TU-NL"),levels=design)
+design= model.matrix(~Patient+Class)
+
+
+fit = lmFit(eset,design)
+fit <- eBayes(fit)
+	
+	
+# get the 450k annotation data
+ann450k = getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+ann450kSub <- ann450k[match(rownames(eset),ann450k$Name),c(1:4,12:19,24:ncol(ann450k))]
+
+DMPs <- topTable(fit,  num=Inf, coef="ClassTU", genelist=ann450kSub, adjust.method='BH')
+
+#from here
+#######get difference from beta values and add that logfc  column to toptable
+eset = ExpressionSet( getBeta(grset), phenoData=AnnotatedDataFrame(data.frame(pData(grset),check.names=F)), featureData=AnnotatedDataFrame( fdata[featureNames(grset),]) )
+
+
+fit = lmFit(eset,design)
+fit <- eBayes(fit)
+
+DMPs.beta <- topTable(fit,  num=Inf, coef="ClassTU", genelist=ann450kSub, adjust.method='BH')
+DMPs.beta <- DMPs.beta[,c(4,23)]
+
+
+colnames(DMPs.beta) <- c("Name","logFCBeta")
+
+DMPs <-  merge(DMPs,DMPs.beta)
+write.table(DMPs, file=paste("DMPs.merge_patients.csv", sep=""), sep=",", row.names=T)
+#write.table(DMPs, file=paste("DMPs.merge.4.patients.match.with.wgbs.flipped.sign.csv", sep=""), sep=",", row.names=T)
+
+ 
+ 
+ 
+ 
+ 
+```
+

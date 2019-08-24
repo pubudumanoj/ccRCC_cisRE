@@ -1,0 +1,91 @@
+---
+title: "Differnetial expression of 4 patients"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r}
+##############################################################################
+####Differnetial analysis for RNA seq data - Multi factor analysis############
+##############################################################################
+
+
+
+#Create the structure of the data frame by adding information and other meta data
+sampleTable_RNA <- data.frame(row.names = NULL,
+                          sample_name=c("control1","control2","control3","control4", "sample1","sample2","sample3","sample4"),
+                          file_name = c("RNA-seq_counts_4patients/R354_N_1_Kidney_RNASeq_count_int_strict.txt",
+                                        "RNA-seq_counts_4patients/R371_N_1_Kidney_RNASeq_count_int_strict.txt",
+                                        "RNA-seq_counts_4patients/R380_N_1_Kidney_RNASeq_count_int_strict.txt",
+                                        "RNA-seq_counts_4patients/R400_N_1_Kidney_RNASeq_count_int_strict.txt",
+                                        "RNA-seq_counts_4patients/R354_T_1_Kidney_RNASeq_count_int_strict.txt",
+                                        "RNA-seq_counts_4patients/R371_T_1_Kidney_RNASeq_count_int_strict.txt",
+                                        "RNA-seq_counts_4patients/R380_T_1_Kidney_RNASeq_count_int_strict.txt",
+                                        "RNA-seq_counts_4patients/R400_T_1_Kidney_RNASeq_count_int_strict.txt"),
+                          condition=c("Normal","Normal","Normal","Normal", "tumor","tumor","tumor","tumor"),
+                          patient=c("patient1","patient2","patient3","patient4","patient1","patient2","patient3","patient4")
+                          )
+
+library("DESeq2")
+
+#define the design formula(model) of the experiment
+ddsHTSeq_RNA <- DESeqDataSetFromHTSeqCount(sampleTable = sampleTable_RNA,
+                                       directory = directory,
+                                       design= ~ patient + condition)
+
+#specify the reference (control sample)
+ddsHTSeq_RNA$condition <- relevel(ddsHTSeq_RNA$condition, ref="Normal")
+
+#print the object
+ddsHTSeq_RNA
+
+#Pre-filtering rows with very low counts (i.r 0 counts)
+ddsHTSeq_filtered_RNA<-ddsHTSeq_RNA[ rowSums(counts(ddsHTSeq_RNA)) > 1, ]
+
+#using this function it automatically combine HTSeq output and prepare the input to the DESeq analysis
+ddsMF_RNA2 <-DESeq(ddsHTSeq_filtered_RNA)
+
+#https://support.bioconductor.org/p/60838/
+#https://support.bioconductor.org/p/63567/
+#https://support.bioconductor.org/p/75244/
+
+#get mean expression value by the condition type. e.g normal vs tumor sepearately
+baseMeanPerLvl <- sapply( levels(ddsMF_RNA$condition), function(lvl) rowMeans( counts(ddsMF_RNA,normalized=TRUE)[,ddsMF_RNA$condition == lvl] ) )
+write.csv(baseMeanPerLvl, file="basemean.gene.expression.csv")
+
+head(ddsMF_RNA2,n=10)
+ddsMF_RNA2
+#Results tables are generated using the function results, which extracts a results
+#table with log2 fold changes, p values and adjusted p values
+#FDR cutoff 0.05
+resMF <- results(ddsMF_RNA2,alpha=0.05)
+head(resMF)
+
+#Normalization of count values
+
+cds2 <- estimateSizeFactors(ddsMF_RNA2)
+sizeFactors( cds2 )
+#normalized count value without logged transformation
+head( counts( cds2, normalized=TRUE ) )
+four.patient.norm.read.counts <- counts( cds2, normalized=TRUE )
+
+#We can order our results table by the smallest adjusted p value (padj) or p value (pvalue)
+resOrdered <- resMF[order(resMF$padj),]
+head(resOrdered, n=10)
+
+#down regulated genes
+head( resOrdered[ order( resOrdered$log2FoldChange, -resOrdered$baseMean ), ] )
+#up regulated genes
+head( resOrdered[ order( -resOrdered$log2FoldChange, -resOrdered$baseMean ), ] )
+
+#We can summarize some basic tallies using the summary function
+summary(resOrdered)
+
+
+#write to file
+
+write.csv( resOrdered[ order( -resOrdered$log2FoldChange, -resOrdered$baseMean ), ], file="ordered.down.regulated.genes.csv" )
+
+```
+

@@ -1,0 +1,555 @@
+---
+title: "Fig 6 C and D"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+###################
+##VHL analysis
+
+```{r}
+####function for creating the fraction of cpgs around a genomic region
+
+distMeanPlot <- function(file=NULL, correct.distance=FALSE, beta=0, fdr=0.05, range=10000,
+                         nbins=200, hypergroup="Hyper", hypogroup="Hypo",  xlab="Distance of CpG From TSS",
+                         ylab="Fraction of differentially\nmethylated CpGs", legend.title="Samples", multiple.rows=TRUE, legendposition = "none", scale_y_upper=0.35, correct.sign=FALSE){
+  # read the table
+
+  library(data.table)
+  library(OneR)
+  library(ggplot2)
+  library(Hmisc)
+  library(dplyr)
+
+
+  rcc4.closest <- fread(file,sep="\t",data.table = F)
+
+  if(multiple.rows==TRUE){
+    rcc4.closest <- rcc4.closest[c(4,13,5,7)]
+    colnames(rcc4.closest) <- c("CpG","distance_from_TSS", "delta_Beta", "FDR")
+
+  }  else{
+    #rcc4.closest <- fread("closest.DMPs.with.TSS.for.cRCC4.filtered.for.graham.graph.txt",sep="\t",data.table = F)
+    colnames(rcc4.closest) <- c("CpG","CpG_strand","gene", "gene_strand" ,"distance_from_TSS", "delta_Beta", "FDR")
+  }
+  # The way Pubudu has calcualted the table, the upstream/downstream is defined relative to the orientation of CpG, rather than being defined relative to the TSS
+  # I think this should correct the issue
+  if(correct.distance==TRUE){
+    rcc4.closest$distance_from_TSS[ rcc4.closest$CpG_strand == rcc4.closest$gene_strand ] <- rcc4.closest$distance_from_TSS[ rcc4.closest$CpG_strand == rcc4.closest$gene_strand ] * -1
+  }
+  if(correct.sign==TRUE){
+    rcc4.closest$delta_Beta <- rcc4.closest$delta_Beta * -1
+  }
+  # The parameters for drawing the plot
+  beta_threshold <- beta
+  #the delta-beta threshold for determining differential CpGs
+  fdr_threshold <- fdr # the FDR threshold for determining differential CpGs
+  range <- range # the rcc4.closestlims for the plot
+  nbins <- nbins # the resolution
+
+  # mark hyper-methylated and hypo-methylated CpGs
+  #if you want fraction remove the comment
+  #rcc4.closest <- subset(rcc4.closest, FDR <= 0.05)
+  rcc4.closest$hyper <- rcc4.closest$FDR < fdr_threshold & rcc4.closest$delta_Beta > beta_threshold
+  rcc4.closest$hypo <- rcc4.closest$FDR < fdr_threshold & rcc4.closest$delta_Beta < -beta_threshold
+
+  # determine the assignment of CpGs to bins based on distance to the nearest TSS
+  rcc4.closest$bin <- bin(rcc4.closest$distance_from_TSS,nbins,method = "content")
+
+  # calculate the averages for each bin
+  hyperMeans <- data.frame(tapply(rcc4.closest$hyper,rcc4.closest$bin,mean))
+
+
+  #convert row names in to column values
+  hyperMeans <- setDT(hyperMeans, keep.rownames = TRUE)[]
+  colnames(hyperMeans) <- c("distance.bin", "CpG.mean")
+  hypoMeans <- data.frame(tapply(rcc4.closest$hypo,rcc4.closest$bin,mean))
+  #convert row names in to column values
+  hypoMeans <- setDT(hypoMeans, keep.rownames = TRUE)[]
+  colnames(hypoMeans) <- c("distance.bin", "CpG.mean")
+
+  distanceMeans <- data.frame(tapply(rcc4.closest$distance_from_TSS,rcc4.closest$bin,mean))
+  #convert row names in to column values
+  distanceMeans <- setDT(distanceMeans, keep.rownames = TRUE)[]
+  colnames(distanceMeans) <- c("distance.bin", "distance.mean")
+
+
+  #https://stackoverflow.com/questions/14033551/r-plotting-confidence-bands-with-ggplot
+  #https://stackoverflow.com/questions/1660124/how-to-sum-a-variable-by-group?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+  #https://stackoverflow.com/questions/9809166/count-number-of-rows-within-each-group/9809441?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+  #https://stackoverflow.com/questions/9809166/count-number-of-rows-within-each-group?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+
+
+  #count number of values in each bin
+  bin.size <- count(rcc4.closest, bin)
+  #count true in each bin
+  hyper.true.in.each.bin <- aggregate(rcc4.closest$hyper, by=list(Category=rcc4.closest$bin), FUN=sum)
+  #merge all
+  hyperMeans.merge.with.distance <- merge(merge(merge(distanceMeans, hyperMeans, by="distance.bin"),bin.size,by.x = "distance.bin", by.y="bin"),hyper.true.in.each.bin, by.x = "distance.bin", by.y="Category" )
+  #calculate Confidence intervels for each mean. binomial CI for number of hyper/total cpg
+  hyperMeans_CI <- binconf(hyperMeans.merge.with.distance$x, hyperMeans.merge.with.distance$n, alpha=0.05,
+                           method=c("exact"),include.x=FALSE, include.n=FALSE, return.df=FALSE)
+  #join CI data frame
+  hyperMeans.merge.with.distance <- data.frame(hyperMeans.merge.with.distance,hyperMeans_CI)
+  hyperMeans.merge.with.distance$group <- hypergroup
+
+  hypo.true.in.each.bin <- aggregate(rcc4.closest$hypo, by=list(Category=rcc4.closest$bin), FUN=sum)
+
+  hypoMeans.merge.with.distance <- merge(merge(merge(distanceMeans, hypoMeans, by="distance.bin"),bin.size, by.x = "distance.bin", by.y="bin"),hypo.true.in.each.bin, by.x = "distance.bin", by.y="Category")
+  hypoMeans_CI <- binconf(hypoMeans.merge.with.distance$x, hypoMeans.merge.with.distance$n, alpha=0.05,
+                          method=c("exact"),include.x=FALSE, include.n=FALSE, return.df=FALSE)
+  hypoMeans.merge.with.distance <- data.frame(hypoMeans.merge.with.distance,hypoMeans_CI)
+  hypoMeans.merge.with.distance$group <- hypogroup
+###find enrichment for hyper and hypo
+  hyperMeans.merge.with.distance$enrichment <- log(hyperMeans.merge.with.distance$CpG.mean/(109268/467971))
+  hypoMeans.merge.with.distance$enrichment <- log(hypoMeans.merge.with.distance$CpG.mean/(45310/467971))
+  final.mean.distance.and.cpg.count.mean <- rbind(hyperMeans.merge.with.distance, hypoMeans.merge.with.distance)
+
+  figure <- ggplot(data=final.mean.distance.and.cpg.count.mean, aes(x=distance.mean, y=CpG.mean, group=group, colour=group)) +
+    geom_line(size=0.8) +
+    #geom_point(color="black")+
+    #scale_color_discrete(legend.title)+
+    scale_color_manual(values=c("red", "blue"))+
+    geom_ribbon(data=final.mean.distance.and.cpg.count.mean,aes(ymin=Lower,ymax=Upper),alpha=0.1,colour = NA)+
+    ggtitle( paste(xlab," ",fdr_threshold,"beta=",beta_threshold,"bins=",nbins,"range=",range)) +
+    scale_x_continuous(limits = c(-range, range))+
+    scale_y_continuous(limits = c(0, scale_y_upper))+
+    theme_bw()+
+    theme(plot.title = element_text(size=12), legend.position = "none", text = element_text(size=29),
+          axis.text = element_text( size=21), legend.key.size = unit(1.5, 'lines'),
+          panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+						panel.background = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.length=unit(.25, "cm"))+labs(x=xlab,y=ylab)
+
+#uncomeent if u need enrichment graph ### working properly
+  # print(ggplot(data=final.mean.distance.and.cpg.count.mean, aes(x=distance.mean, y=enrichment, group=group, colour=group)) +
+  #         geom_line(size=1) +
+  #         #geom_point(color="black")+
+  #         scale_color_discrete(legend.title)+
+  #         ggtitle( paste(xlab," ",fdr_threshold,"beta=",beta_threshold,"bins=",nbins,"range=",range)) +
+  #         scale_x_continuous(limits = c(-range, range))+
+  #         theme_bw()+
+  #         #  guides(fill=guide_legend(nrow=2,byrow=TRUE))+
+  #         theme(plot.title = element_text(size=12), legend.position = legendposition, text = element_text(size=29),
+  #               axis.text = element_text( size=21), legend.key.size = unit(1.5, 'lines'))+labs(x=xlab,y="Log enrichment ratio"))
+print(figure)
+ # return(final.mean.distance.and.cpg.count.mean)
+
+
+
+}
+
+```
+
+```{bash}
+
+awk -v OFS="\t" 'BEGIN{a=0;b=0;c=0} { if($3=="gene") {gname= substr($10, 1, length($10)-2); gname = substr(gname, 2, length(gname)-1); if($7=="+") {a=$4; b=a; c=a+1; print $1="chr"$1,b,c,gname,".",$7} else if($7=="-"){a=$5; b=a-1; c=a; print $1="chr"$1,b,c,gname,".",$7 }}}' Homo_sapiens.GRCh37.75.gtf > TSS.onebp.position.for.finding.nearest.cpgs.bed
+
+
+sort -k1,1V -k2,2n TSS.onebp.position.for.finding.nearest.cpgs.bed | awk '{if($1=="chr1" || $1=="chr2") {print $0}}' > TSS.onebp.position.for.finding.nearest.cpgs.sorted.bed
+
+closestBed -D a -t first -a DMPs.for.window.analysis.sorted.new.RCC4.bed -b TSS.onebp.position.for.finding.nearest.cpgs.sorted.bed > closest.DMPs.to.TSS.for.CRCC4.txt
+awk -v OFS="\t" '{print $4,$6,$11,$13,$14,$5,$7}' closest.DMPs.to.TSS.for.CRCC4.txt > closest.DMPs.with.TSS.for.cRCC4.filtered.for.graph.txt
+```
+
+####RCC4 around TSS
+```{r, fig.height=6, fig.width=10}
+#pdf(file="fig6_c_rcc4_methylation_TSS.pdf", height=5,width=7.4)
+  distMeanPlot(file="closest.DMPs.with.TSS.for.cRCC4.filtered.for.graph.txt", correct.distance=TRUE, beta=0,
+               fdr=0.05, nbins=400,
+               range=10000, hypergroup="VHL/MOCK hypermethylated-RCC4", hypogroup="VHL/MOCK hypomethylated",
+               xlab="Distance of CpG From TSS", ylab="Fraction of differesssntially\nmethylated CpGs", multiple.rows=FALSE)
+
+#dev.off()
+
+
+```
+
+```{bash}
+###How do these curves look like if we calculate the distance relative to the centre of DHS sites? What if we divide the DHS sites from ENCODE (or IHEC) based on  DHS only in kidney-related cell types (kidney-specific DHS)
+
+
+mkdir DHS.NIH.roadmap
+cd DHS.NIH.roadmap
+
+#DHS downloaded from
+#https://www.ncbi.nlm.nih.gov/geo/roadmap/epigenomics/?display=50&sample=kidney%2C%20fetal&sort=experiment
+#download relevant bed files using wget
+#first selected day 87 male and female four files (left right kidney)
+gunzip *.gz
+#module load gcc/5.4.0 bedtools/2.26.0
+#need to sort by -k1,1V for bedtools
+#get the DHS bed file and just print all the rule and then sort
+
+
+cat *.bed | sort -k1,1V -k2,2n | mergeBed -i stdin -s | sort -k1,1V -k2,2n > ../DHS.in.kidney.day87.bed
+
+celline="RCC4"
+closestBed -D b -t first -a DHS.in.kidney.day87.bed -b ../TSS.onebp.position.for.finding.nearest.cpgs.sorted.bed | awk '{if($6!=-1){print $0}}' > closest.any.DHS.to.TSS.kidney.day87.txt
+
+range=5000
+promoter_range=2000
+
+#create the gene body file from gene annotation file
+awk -v OFS="\t" 'BEGIN{a=0;b=0;c=0} { if($3=="gene") {gname= substr($10, 1, length($10)-2); gname = substr(gname, 2, length(gname)-1); print $1="chr"$1,$4,$5,gname,".",$7}}' Homo_sapiens.GRCh37.75.gtf > grc37.gene.body.regions.bed
+
+#select first 5 columns
+#remove regions close to 5kb TSS
+
+#for 5kb region
+#remove regions overlap with gene body using bedtools intersect
+#get the centre of DHS with one bp position
+cd ../
+
+awk -v OFS="\t" '{print $1,$2,$3,$4,$11}' closest.any.DHS.to.TSS.kidney.day87.txt |  awk -v range="$range" '{if($5 > range || $5 < -range){print $0}}' | bedtools intersect -a stdin -b grc37.gene.body.regions.bed -v | awk -v OFS="\t" '{middle = (int(($3-$2)/2))+$2; print $1,middle,middle+1,$4,$5}' | sort -k1V,1 -k2,2n > closest.any.DHS.with.TSS.filter.${range}bp.TSS.remove.gene.body.kidney.day87.bed
+
+
+closestBed -D b -t first -a DMPs.for.window.analysis.sorted.new.RCC4.bed -b closest.any.DHS.with.TSS.filter.${range}bp.TSS.remove.gene.body.kidney.day87.bed > closest.any.DHS.with.TSS.filter.${range}bp.TSS.remove.gene.body.for.${celline}.filtered.for.graph.centre.from.DHS.kidney.day87.txt
+```
+
+
+```{r}
+#kidney
+#pdf(file="fig6_d_rcc4_methylation_DHS_kidney.pdf", height=5,width=7.4)
+
+  # kidney
+  distMeanPlot(file="rcc4/closest.any.DHS.with.TSS.filter.5000bp.TSS.remove.gene.body.for.RCC4.filtered.for.graph.centre.from.DHS.kidney.day87.txt",
+               correct.distance=FALSE,beta=0, fdr=0.05, nbins=400,
+               range=5000, hypergroup="VHL/MOCK hypermethylated", hypogroup="VHL/MOCK hypomethylated",
+               xlab="Distance of CpG From DHS", ylab="Fraction of differentially\nmethylated CpGs", multiple.rows=TRUE, scale_y_upper=0.37)
+
+  #dev.off()
+```
+
+```{r}
+
+#new type of distance mean graph for vhl independent and dependent cpgs in patients
+
+#have to create a new function for this
+
+
+
+distMeanPlotpatients <- function(file=NULL,  beta=0, fdr=0.05, range=10000,
+                         nbins=200, hyper.depgroup="VHL dependent hypermethylated",
+                         hypo.depgroup="VHL dependent hypomethylated",
+                         hypo.disease.exclusive.group= "Disease exclusive hypomethylated",
+                         hyper.disease.exclusive.group = "Disease exclusive hypermethylated",
+                         hypo.cell.exclusive.group= "Cell-line exclusive hypomethylated",
+                         hyper.cell.exclusive.group = "Cell-line exclusive hypermethylated",
+                         hyper.disease.common.group = "Disease and common hypermethylated",
+                         hypo.disease.common.group = "Disease and common hypomethylated",
+                         xlab="Distance of CpG From TSS",
+                         ylab="Fraction of differentially\nmethylated CpGs", legend.title="groups", multiple.rows=TRUE
+                         , cell="RCC4", patient="patient", groupn="all", legendposition = "none", scale_y_upper=0.35,      filter_rows=T){
+  # read the table
+
+  library(data.table)
+  library(OneR)
+  library(ggplot2)
+  library(Hmisc)
+  library(dplyr)
+
+  rcc4.closest <- fread(file,sep="\t",data.table = F)
+
+if(filter_rows==T){
+
+    rcc4.closest <- rcc4.closest[c(4:9,13,15,16)]
+    colnames(rcc4.closest) <- c("CpG" , "cellline.beta","cpg_strand",  "cellline.fdr",
+                                "patient.beta",
+                               "patient.fdr","gene", "gene_strand" ,"distance_from_TSS")
+
+} else{
+  colnames(rcc4.closest) <- c("CpG" , "cellline.beta","cpg_strand",  "cellline.fdr",
+                                "patient.beta","patient.fdr",
+                               "distance_from_TSS")
+  
+}
+
+    # The parameters for drawing the plot
+        beta_threshold <- beta
+    #the delta-beta threshold for determining differential CpGs
+    fdr_threshold <- fdr # the FDR threshold for determining differential CpGs
+    range <- range # the rcc4.closestlims for the plot
+    nbins <- nbins # the resolution
+
+
+    rcc4.closest$hyper.dependent <- rcc4.closest$patient.fdr < fdr_threshold & rcc4.closest$patient.beta > beta_threshold &
+      rcc4.closest$cellline.fdr < fdr_threshold & rcc4.closest$cellline.beta > beta_threshold
+   # rcc4.closest$hyper.independent <- rcc4.closest$patient.fdr < fdr_threshold & rcc4.closest$patient.beta > beta_threshold &
+    #  rcc4.closest$cellline.fdr < fdr_threshold & rcc4.closest$cellline.beta > beta_threshold
+
+    rcc4.closest$hyper.disease.exclusive <- rcc4.closest$patient.fdr < fdr_threshold & rcc4.closest$patient.beta > beta_threshold &
+      rcc4.closest$cellline.fdr > fdr_threshold
+
+    #########remove later
+    rcc4.closest$hyper.disease.common <- (rcc4.closest$patient.fdr < fdr_threshold & rcc4.closest$patient.beta > beta_threshold &
+                                            rcc4.closest$cellline.fdr < fdr_threshold & rcc4.closest$cellline.beta > beta_threshold) |
+      (rcc4.closest$patient.fdr < fdr_threshold & rcc4.closest$patient.beta > beta_threshold &
+                                                      rcc4.closest$cellline.fdr > fdr_threshold)
+    ##########################################
+
+
+    rcc4.closest$hypo.dependent <- rcc4.closest$patient.fdr < fdr_threshold & rcc4.closest$patient.beta < -beta_threshold &
+      rcc4.closest$cellline.fdr < fdr_threshold & rcc4.closest$cellline.beta < -beta_threshold
+   # rcc4.closest$hypo.independent <- rcc4.closest$patient.fdr < fdr_threshold & rcc4.closest$patient.beta < -beta_threshold &
+    #  rcc4.closest$cellline.fdr < fdr_threshold & rcc4.closest$cellline.beta < -beta_threshold
+
+    rcc4.closest$hypo.disease.exclusive <- rcc4.closest$patient.fdr < fdr_threshold & rcc4.closest$patient.beta < -beta_threshold &
+     rcc4.closest$cellline.fdr > fdr_threshold
+
+    ###############remove later
+    rcc4.closest$hypo.disease.common <- (rcc4.closest$patient.fdr < fdr_threshold & rcc4.closest$patient.beta < -beta_threshold &
+      rcc4.closest$cellline.fdr > fdr_threshold) | (rcc4.closest$patient.fdr < fdr_threshold & rcc4.closest$patient.beta < -beta_threshold &
+                                                      rcc4.closest$cellline.fdr < fdr_threshold & rcc4.closest$cellline.beta < -beta_threshold)
+
+    ###################################3
+
+
+    rcc4.closest$hyper.cell.exclusive <- rcc4.closest$patient.fdr > fdr_threshold & rcc4.closest$cellline.beta > beta_threshold &
+      rcc4.closest$cellline.fdr < fdr_threshold
+
+    rcc4.closest$hypo.cell.exclusive <- rcc4.closest$patient.fdr > fdr_threshold & rcc4.closest$cellline.beta < -beta_threshold &
+      rcc4.closest$cellline.fdr < fdr_threshold
+
+
+
+    # determine the assignment of CpGs to bins based on distance to the nearest TSS
+    rcc4.closest$bin <- bin(rcc4.closest$distance_from_TSS,nbins,method = "content")
+
+    innerfunction <- function(df2=NULL, distanceMeans=NULL, bin.size=NULL, group=NULL){
+      # calculate the averages for each bin
+      means <- data.frame(tapply(df2,rcc4.closest$bin,mean))
+
+      #convert row names in to column values
+      means <- setDT(means, keep.rownames = TRUE)[]
+      colnames(means) <- c("distance.bin", "CpG.mean")
+
+      #count true in each bin
+      true.in.each.bin <- aggregate(df2, by=list(Category=rcc4.closest$bin), FUN=sum)
+
+
+      #merge all
+      Means.merge.with.distance <- merge(merge(merge(distanceMeans, means, by="distance.bin"),bin.size,by.x = "distance.bin", by.y="bin"),true.in.each.bin, by.x = "distance.bin", by.y="Category" )
+
+
+      #calculate Confidence intervels for each mean. binomial CI for number of hyper/total cpg
+      Means_CI <- binconf(Means.merge.with.distance$x, Means.merge.with.distance$n, alpha=0.05,
+                               method=c("exact"),include.x=FALSE, include.n=FALSE, return.df=FALSE)
+
+
+      #join CI data frame
+      Means.merge.with.distance <- data.frame(Means.merge.with.distance,Means_CI)
+      Means.merge.with.distance$group <- group
+            return(Means.merge.with.distance)
+    }
+
+
+
+    distanceMeans <- data.frame(tapply(rcc4.closest$distance_from_TSS,rcc4.closest$bin,mean))
+    #convert row names in to column values
+    distanceMeans <- setDT(distanceMeans, keep.rownames = TRUE)[]
+    colnames(distanceMeans) <- c("distance.bin", "distance.mean")
+
+    #count number of values in each bin
+    bin.size <- count(rcc4.closest, bin)
+    if(groupn=="all"){
+   hyper.dependent.mean <- innerfunction(rcc4.closest$hyper.dependent, distanceMeans=distanceMeans,
+                                         bin.size=bin.size, group=hyper.depgroup)
+   hyper.disease.exclusive.mean <- innerfunction(rcc4.closest$hyper.disease.exclusive, distanceMeans=distanceMeans,
+                                           bin.size=bin.size, group=hyper.disease.exclusive.group)
+   hypo.dependent.mean <- innerfunction(rcc4.closest$hypo.dependent, distanceMeans=distanceMeans,
+                                        bin.size=bin.size, group=hypo.depgroup)
+   hypo.disease.exclusive.mean <- innerfunction(rcc4.closest$hypo.disease.exclusive, distanceMeans=distanceMeans,
+                                          bin.size=bin.size, group=hypo.disease.exclusive.group)
+   hyper.cell.exclusive.mean <- innerfunction(rcc4.closest$hyper.cell.exclusive, distanceMeans=distanceMeans,
+                                                 bin.size=bin.size, group=hyper.cell.exclusive.group)
+   hypo.cell.exclusive.mean <- innerfunction(rcc4.closest$hypo.cell.exclusive, distanceMeans=distanceMeans,
+                                                bin.size=bin.size, group=hypo.cell.exclusive.group)
+
+   final.mean.distance.and.cpg.count.mean <- rbind(hyper.dependent.mean, hyper.disease.exclusive.mean,hypo.dependent.mean,hypo.disease.exclusive.mean,hyper.cell.exclusive.mean,hypo.cell.exclusive.mean)
+
+    }else if(groupn=="dep"){
+      hyper.dependent.mean <- innerfunction(rcc4.closest$hyper.dependent, distanceMeans=distanceMeans,
+                                            bin.size=bin.size, group=hyper.depgroup)
+      hyper.dependent.mean$enrichment <- log(hyper.dependent.mean$CpG.mean/0.118877)
+      hypo.dependent.mean <- innerfunction(rcc4.closest$hypo.dependent, distanceMeans=distanceMeans,
+                                           bin.size=bin.size, group=hypo.depgroup)
+      hypo.dependent.mean$enrichment <- log(hypo.dependent.mean$CpG.mean/0.03835067)
+      final.mean.distance.and.cpg.count.mean <- rbind(hyper.dependent.mean, hypo.dependent.mean
+                                                      )
+
+    }
+    else if(groupn=="cell"){
+      hyper.cell.exclusive.mean <- innerfunction(rcc4.closest$hyper.cell.exclusive, distanceMeans=distanceMeans,
+                                                 bin.size=bin.size, group=hyper.cell.exclusive.group)
+      hyper.cell.exclusive.mean$enrichment <- log(hyper.cell.exclusive.mean$CpG.mean/(26026/467971))
+      hypo.cell.exclusive.mean <- innerfunction(rcc4.closest$hypo.cell.exclusive, distanceMeans=distanceMeans,
+                                                bin.size=bin.size, group=hypo.cell.exclusive.group)
+      hypo.cell.exclusive.mean$enrichment <- log(hypo.cell.exclusive.mean$CpG.mean/(17947/467971))
+
+
+      final.mean.distance.and.cpg.count.mean <- rbind( hyper.cell.exclusive.mean,hypo.cell.exclusive.mean)
+
+    }
+    else if(groupn=="disease"){
+      hyper.disease.exclusive.mean <- innerfunction(rcc4.closest$hyper.disease.exclusive, distanceMeans=distanceMeans,
+                                                    bin.size=bin.size, group=hyper.disease.exclusive.group)
+      hyper.disease.exclusive.mean$enrichment <- log(hyper.disease.exclusive.mean$CpG.mean/(81129/467971))
+
+      hypo.disease.exclusive.mean <- innerfunction(rcc4.closest$hypo.disease.exclusive, distanceMeans=distanceMeans,
+                                                   bin.size=bin.size, group=hypo.disease.exclusive.group)
+      hypo.disease.exclusive.mean$enrichment <- log(hypo.disease.exclusive.mean$CpG.mean/(80043/467971))
+
+
+      final.mean.distance.and.cpg.count.mean <- rbind( hyper.disease.exclusive.mean,hypo.disease.exclusive.mean)
+
+    }
+
+    else if(groupn=="disease_common"){
+      #combine disease exclusive with common cpgs in both data sets
+      hyper.disease.common.mean <- innerfunction(rcc4.closest$hyper.disease.common, distanceMeans=distanceMeans,
+                                                    bin.size=bin.size, group=hyper.disease.common.group)
+      hyper.disease.common.mean$enrichment <- log(hyper.disease.common.mean$CpG.mean/(81129/467971))
+
+      hypo.disease.common.mean <- innerfunction(rcc4.closest$hypo.disease.common, distanceMeans=distanceMeans,
+                                                   bin.size=bin.size, group=hypo.disease.common.group)
+      hypo.disease.common.mean$enrichment <- log(hypo.disease.common.mean$CpG.mean/(80043/467971))
+
+
+      final.mean.distance.and.cpg.count.mean <- rbind( hyper.disease.common.mean,hypo.disease.common.mean)
+
+    }
+
+
+   figure <- ggplot(data=final.mean.distance.and.cpg.count.mean, aes(x=distance.mean, y=CpG.mean, group=group, colour=group)) +
+     geom_line(size=1.3) +
+     #geom_point(color="black")+
+     #scale_color_discrete(legend.title)+
+      scale_color_manual(values=c("blue", "red"))+
+     geom_ribbon(data=final.mean.distance.and.cpg.count.mean,aes(ymin=Lower,ymax=Upper),alpha=0.1,colour = NA)+
+     ggtitle( paste(xlab," ",fdr_threshold,"beta=",beta_threshold,"bins=",nbins,"range=",range)) +
+     scale_x_continuous(limits = c(-range, range))+
+     scale_y_continuous(limits = c(0, scale_y_upper))+
+     theme_bw()+
+   #  guides(fill=guide_legend(nrow=2,byrow=TRUE))+
+     theme(plot.title = element_text(size=12), legend.position = legendposition, text = element_text(size=29),
+          axis.text = element_text( size=21), legend.key.size = unit(1.5, 'lines'),
+          panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+						panel.background = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.length=unit(.25, "cm"))+labs(x=xlab,y=ylab)
+   
+   
+   
+
+   ###I commented below line after sometimes I check the code I coulnd't understand what it is. check from
+   #begining
+   # print(ggplot(data=final.mean.distance.and.cpg.count.mean, aes(x=distance.mean, y=enrichment, group=group, colour=group)) +
+   #         geom_line(size=1.3) +
+   #         #geom_point(color="black")+
+   #         scale_color_discrete(legend.title)+
+   #         ggtitle( paste(xlab," ",fdr_threshold,"beta=",beta_threshold,"bins=",nbins,"range=",range)) +
+   #         scale_x_continuous(limits = c(-range, range))+
+   #         theme_bw()+
+   #         #  guides(fill=guide_legend(nrow=2,byrow=TRUE))+
+   #         theme(plot.title = element_text(size=12), legend.position = legendposition, text = element_text(size=29),
+   #               axis.text = element_text( size=21), legend.key.size = unit(1.5, 'lines'))+labs(x=xlab,y="Log enrichment ratio"))
+   #
+
+      #legend_position="none"
+
+   return(figure)
+
+
+#  return(hypo.independent.mean)
+
+
+
+
+}
+
+#common
+#pdf(file=paste("figures/fraction of cpgs around TSS.common.patients.alltypes.pdf",sep=""), height=8,width=15)
+
+ # distMeanPlotpatients(file="common/closest.DMPs.with.TSS.for.common.cRCC4.merge.common.patients.for.graph.txt",
+  #           beta=0, fdr=0.05, nbins=400, legend.title="Groups",
+   #          range=5000, xlab="Distance of CpG From TSS",
+    #         ylab="Fraction of differentially\nmethylated CpGs",
+     #        cell="RCC4.common", patient="common.patient",groupn="all")
+
+ #dev.off()
+
+
+  
+
+
+```
+
+```{r}
+library(dplyr)
+library(data.table)
+library(stringi)
+
+
+####all CpGs
+DMPs.common.RCC4 <- read.csv(file="DMPs.for.window.analysis.sorted.new.RCC4.bed", sep="\t", header = FALSE)
+
+DMPs.common.patients <- read.csv(file="DMPs.for.window.analysis.sorted.new.patients.bed", sep="\t", header = FALSE)
+
+
+preparedfstoclosest <- function(df=NULL, sample=NULL){
+
+colnames(df)  <- c("chr","start", "end", "CpG", paste("dbeta",sample,sep="."), "strand", paste("fdr",sample, sep="."))
+return(df)
+}
+temp.df <- preparedfstoclosest(df=DMPs.common.patients, sample="common.patients")
+temp.df <- temp.df[c(4,5,7)]
+
+DMP.merge <- merge(preparedfstoclosest(df=DMPs.common.RCC4, sample="common.RCC4"),temp.df, by="CpG")
+DMP.merge <- DMP.merge[c(2:4,1,5:9)]
+
+
+write.table(DMP.merge, file="DMPs.for.window.analysis.new.all.cpgs.in.rcc4.merge.with.patients.bed", sep="\t", col.names=F, row.names=F, quote=F)
+```
+
+```{bash}
+sort -k1,1V -k2,2n DMPs.for.window.analysis.new.all.cpgs.in.rcc4.merge.with.patients.bed | closestBed -D b -t first -a stdin -b TSS.onebp.position.for.finding.nearest.cpgs.sorted.bed > closest.DMPs.with.TSS.for.all.cRCC4.cpgs.merge.all.patients.cpgs.for.graph.txt
+```
+
+```{r}
+ #only RCC4
+#pdf(file="fig6_c_patient_methylation_TSS.pdf", height=5,width=7.4)
+
+  distMeanPlotpatients(file="closest.DMPs.with.TSS.for.all.cRCC4.cpgs.merge.all.patients.cpgs.for.graph.txt",
+                      beta=0, fdr=0.05, nbins=400, legend.title="Groups",
+                      range=10000, xlab="Distance of CpG From TSS",
+                      ylab="Fraction of differentially\nmethylated CpGs",
+                      cell="RCC4", patient="patient",groupn="dep",legendposition = "bottom")
+
+#dev.off()
+```
+
+
+```{bash}
+range=5000
+
+sort -k1,1V -k2,2n DMPs.for.window.analysis.new.all.cpgs.in.rcc4.merge.with.patients.bed > DMPs.for.window.analysis.sorted.new.all.cpgs.in.rcc4.merge.with.patients.bed
+
+
+awk -v OFS="\t" '{print $1,$2,$3,$4,$5,"."}' closest.any.DHS.with.TSS.filter.${range}bp.TSS.remove.gene.body.kidney.day87.bed | closestBed -D b -t first -a DMPs.for.window.analysis.sorted.new.all.cpgs.in.rcc4.merge.with.patients.bed -b stdin > closest.kidney.DHS.with.TSS.filter.${range}bp.TSS.remove.gene.body.for.cRCC4.merge.patients.for.graph.centre.from.DHS.kidney.day87.txt
+
+```
+
+
+
+```{r}
+#kidney dhs
+#rcc4 only
+# pdf(file="fig6_d_patient_methylation_DHS_kidney.pdf", height=5,width=7.4)
+ distMeanPlotpatients(file=paste("closest.kidney.DHS.with.TSS.filter.5000bp.TSS.remove.gene.body.for.cRCC4.merge.patients.for.graph.centre.from.DHS.kidney.day87.txt",sep=""),
+                      beta=0, fdr=0.05, nbins=400, legend.title="Groups",
+                      range=5000, xlab="Distance of CpG From DHS",
+                      ylab="Fraction of differentially\nmethylated CpGs",
+                      cell="RCC4", patient="common.patient",groupn="dep",scale_y_upper=0.37)
+
+# dev.off()
+```

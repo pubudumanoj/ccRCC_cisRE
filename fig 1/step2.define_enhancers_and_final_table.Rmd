@@ -1,0 +1,393 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r}
+
+library(dplyr)
+library(data.table)
+library(stringi)
+library(GenomicRanges)
+library(rtracklayer)
+
+#load overlap enhancr file with wgbs
+enh_T_wgbs <- fread("pooled_all_enh_overlapped_with_wgbs_grc38_extended_normalized_10kb.bed")
+
+enh_wgbs_short <- fread("pooled_all_enh_overlapped_with_wgbs_grc38_extended_normalized.bed")
+#total cpg 
+total_cpg <- fread("all.diff.methylated.min.per.grp.3.cpgs.hg38.txt")
+
+#since wgbs analysis already flip the sign to align with vhl expression (+ = hypo in tumor)
+gene_promoter_df <- fread("closest_gene_promoters_5kb_to_all_enh_overlapped_with_wgbs_grc38.bed")
+
+gene_downstream_df <- fread("closest_gene_dowstream_5kb_to_all_enh_overlapped_with_wgbs_grc38.bed")
+#original file - closest_gene_promoters_2kb_to_all_enh_overlapped_with_wgbs_grc38.bed
+#10kb fdr 0.1 file - closest_gene_promoters_10kb_FDR_0.1_to_all_enh_overlapped_with_wgbs_grc38.bed
+gene_promoter_wgbs <- gene_promoter_df[,c(7,14,15)]
+colnames(gene_promoter_wgbs) <- c("V1","V2", "V3")
+
+gene_downstream_wgbs <- gene_downstream_df[,c(7,14,15)]
+colnames(gene_downstream_wgbs) <- c("V1","V2", "V3")
+
+
+
+ binom_inner_function <- function(enh_df=NULL, total_cpg="total_cpg", hypo_count="hypo_count", hyper_count="hyper_count", p_value="p_value"){
+	
+	enh_T_wgbs <- enh_df
+	
+	enh_T_wgbs$count <- 1
+
+	#count number of overlaps with each enhancer for hypo and hyper and total signigicantly methylated cpgs in the enhancer 
+	enh_wgbs_hypo <- enh_T_wgbs %>% group_by(V1) %>% summarise(hypo_count =sum(count[V2 < 0.05 & V3 > 0]), total_cpg=sum(count))
+	enh_wgbs_hyper <- enh_T_wgbs %>% group_by(V1) %>% summarise(hyper_count =sum(count[V2 < 0.05 & V3 < 0]), total_cpg=sum(count))
+
+
+	bnorm_function <- function(x, n){binom.test(x, n, p=0.5, alternative="greater")}
+
+ df_bnorm_hyper <- mapply(bnorm_function, enh_wgbs_hyper$hyper_count, enh_wgbs_hyper$total_cpg)
+	
+
+	
+	df_bnorm_hypo<- mapply(bnorm_function, enh_wgbs_hypo$hypo_count, enh_wgbs_hypo$total_cpg)
+	
+	##this will be an issue if u want to get the original p value but for filtering rows this will be fine
+	enh_wgbs_hypo[,4] <-  as.numeric(t((df_bnorm_hypo[3,])))
+	enh_wgbs_hypo[,5] <- as.numeric((t((df_bnorm_hyper[3,]))))
+
+
+	colnames(enh_wgbs_hypo) <- c("V1",hypo_count, total_cpg, "p_value_hypo","p_value_hyper")
+	
+	enh_wgbs_hypo$hyper_count <- enh_wgbs_hypo$total_cpg - enh_wgbs_hypo$hypo_count 
+	
+	enh_wgbs_hypo$total_cpg <- NULL
+	
+	enh_wgbs_hypo$p_value <- ifelse(enh_wgbs_hypo$p_value_hypo < enh_wgbs_hypo$p_value_hyper, enh_wgbs_hypo$p_value_hypo, enh_wgbs_hypo$p_value_hyper)
+	enh_wgbs_hypo$methylation_enrichment <- ifelse(enh_wgbs_hypo$p_value_hypo < enh_wgbs_hypo$p_value_hyper, "hypo", "hyper")
+	
+	enh_wgbs_hypo$p_value_hypo <- NULL
+	enh_wgbs_hypo$p_value_hyper <- NULL
+	
+	
+	
+	return(enh_wgbs_hypo)
+	}
+	
+	enh_list_10kb <- binom_inner_function(enh_df=enh_T_wgbs)
+	
+	enh_list_1kb <- binom_inner_function(enh_df=enh_wgbs_short)
+	
+	enh_list_promoter <- binom_inner_function(enh_df=gene_promoter_wgbs) 
+	
+	
+	calculate_fdr <- function(dff=NULL, fdr="fdr"){
+	
+	dff <- as.data.frame(dff)
+	dff[,6] <- p.adjust(dff[,4], "BH")  
+colnames(dff)[6] <- fdr	
+	#enh_wgbs_hyper <- subset(enh_wgbs_hyper, V5 < 0.05)
+	
+	return(dff)
+	}
+	
+	#10kb region as enhancer
+
+	enh_wgbs_hypo_10kb <- calculate_fdr(dff=enh_list_10kb)
+	##1kb region as enhancer
+	enh_wgbs_hypo_1kb <- calculate_fdr(dff=enh_list_1kb)
+	
+	enh_wgbs_hypo_promoter <- calculate_fdr(dff=enh_list_promoter)
+		#2kb promoter of the closest gene
+	
+	###merge 10kb and 1kb
+	#enh_wgbs_hypo <- merge(enh_wgbs_hypo_10kb, enh_wgbs_hypo_1kb, by="V1", all.x=T)
+	
+	#enh_wgbs_hypo[, 6:7][is.na(enh_wgbs_hypo[, 6:7])] <- 0
+	#enh_wgbs_hypo[, 8:9][is.na(enh_wgbs_hypo[, 8:9])] <- 1
+	
+	#enh_wgbs_hyper <- merge(enh_wgbs_hyper_10kb, enh_wgbs_hyper_1kb, by="V1", all.x=T)	
+	
+	#enh_wgbs_hyper[, 6:7][is.na(enh_wgbs_hyper[, 6:7])] <- 0
+	#enh_wgbs_hyper[, 8:9][is.na(enh_wgbs_hyper[, 8:9])] <- 1
+	
+	
+	#load total enhancer file
+	total_enh_10kb <- fread("cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension_normalized_10kb.bed")
+	colnames(total_enh_10kb) <- c("chr", "start", "end" ,"V4")
+	
+	total_enh_1kb <- fread("cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension_normalized_1kb.bed")
+	colnames(total_enh_1kb) <- c("chr", "start", "end" ,"V4")
+	
+	
+	total_enh_promoter <- fread("closest_gene_promoter_5kb_to_enhancers_grc38.bed")
+	total_enh_promoter <- total_enh_promoter[,c(1:3,7)] %>% unique
+	
+	
+	colnames(total_enh_promoter) <- c("chr", "start", "end" ,"V4")
+	#load total cpgs overlap file with enhancers
+	#to calculate total cpgs for each enhancer
+	non_filter_total_1kb <- fread("pooled_all_enh_overlapped_with_wgbs_grc38_extended_normalized_not_cpg_filtered_by_fdr.bed")
+	
+	non_filter_total_temp_1kb <- non_filter_total_1kb %>% group_by(V1) %>% summarise( total_cpg=n())
+	
+	non_filter_total_10kb <- fread("pooled_all_enh_overlapped_with_wgbs_grc38_extended_10kb_normalized_not_cpg_filtered_by_fdr.bed")
+	
+	non_filter_total_temp_10kb <- non_filter_total_10kb %>% group_by(V1) %>% summarise( total_cpg=n())
+	
+	non_filter_total_promoter <- fread("closest_gene_promoters_5kb_to_all_enh_overlapped_with_wgbs_grc38_not_cpg_filtered_by_fdr.bed")
+	
+	non_filter_total_temp_promoter<- non_filter_total_promoter %>% group_by(V1) %>% summarise( total_cpg=n())
+	
+	non_filter_total_downstream <- fread("closest_gene_downstream_5kb_to_all_enh_overlapped_with_wgbs_grc38_not_cpg_filtered_by_fdr.bed")
+	
+	non_filter_total_temp_downstream <- non_filter_total_downstream %>% group_by(V1) %>% summarise( total_cpg=n())
+	
+	
+	#load enhancer file
+	df_ref_enh <- fread("enhancers_from_cancer_discovery_paper.grc38.bed") 
+	#filter N-enh
+	df_ref_enh_N <- subset(df_ref_enh, V5=="N-enh")
+	colnames(df_ref_enh_N) <- c("chr", "start", "end","V4","enh_anno")
+	df_ref_enh_T <- subset(df_ref_enh, V5=="T-enh")
+	colnames(df_ref_enh_T) <- c("chr", "start", "end","V4","enh_anno")
+	
+	df_ref_enh_N <- makeGRangesFromDataFrame(df_ref_enh_N, keep.extra.columns=TRUE)
+	df_ref_enh_T <- makeGRangesFromDataFrame(df_ref_enh_T, keep.extra.columns=TRUE)
+
+	###load query enh to overlap (my enhancers)
+	
+	#erlier we had use this file merge_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed
+	#but since we need overlaps from all enhancers derrived from tumor tissues we need to use cat not merge
+	query_enh_T <- fread("cat_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed")
+	colnames(query_enh_T) <- c("chr", "start", "end" ,"V4")
+	
+	query_enh_N <- fread("cat_N_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed")
+	colnames(query_enh_N) <- c("chr", "start", "end" ,"V4")
+	
+	
+	query_enh_T <- makeGRangesFromDataFrame(query_enh_T, keep.extra.columns=TRUE)
+	query_enh_N <- makeGRangesFromDataFrame(query_enh_N, keep.extra.columns=TRUE)
+	
+	
+	#find the closest gene to each enhancer
+	closest_gene <- fread("closest_gene_to_N_and_T_enh_extended_normalized_grc38.bed")
+	
+	#promoter_gene <- closest_gene[,c(5:10,4)]
+	#colnames(promoter_gene) <- c("chr", "start", "end" ,"gene", ".", "strand", "V4")
+	#promoter_gene <- makeGRangesFromDataFrame(promoter_gene, keep.extra.columns=TRUE)
+	
+	#promoter_gene <- promoters(promoter_gene, upstream=2000, downstream=0)
+	
+	closest_gene_temp <- select(closest_gene, c("V4","V8","V11"))
+	colnames(closest_gene_temp)[c(2,3)] <- c("closest_gene", "distance_to_the_gene_TSS_from_centre_of_enhancer")
+
+	####RNA seq data load
+	vhlev_H <- read.csv(file="RNA.seq.hypoxia.VHLandwildtype.control.is.EV.csv")
+	vhlev_H$rn <- gsub("\\..*","",vhlev_H$rn)
+	vhlev_H <- select(vhlev_H, c("rn","log2FoldChange","padj","V3"))
+	colnames(vhlev_H) <- c("rn","log2FoldChange_vhlev_H","padj_vhlev_H","gene_name")
+	
+	vhlev_N <- read.csv(file="RNA.seq.normoxia.VHLandwildtype.control.is.EV.csv")
+	vhlev_N$rn <- gsub("\\..*","",vhlev_N$rn)
+	vhlev_N <- select(vhlev_N, c("rn","log2FoldChange","padj"))
+	colnames(vhlev_N) <- c("rn","log2FoldChange_vhlev_N","padj_vhlev_N")
+	
+	patients_diff_genes <- read.csv(file="ordered down regulated genes paired conventional patients.csv")
+	patients_diff_genes <- select(patients_diff_genes, c("X","log2FoldChange","padj"))
+	colnames(patients_diff_genes) <- c("rn","log2FoldChange_patients","padj_patients")
+
+	#####convert hg38 to hg19
+	chain <- import.chain("hg38ToHg19.over.chain")
+
+	###450k arrays
+	#if you cannot find this file create a bed file from DMPs.merge.RCC4.csv
+	dmp_450k_rcc4 <- fread("DMPs.RCC4.bed")
+	dmp_450k_rcc4 <- dmp_450k_rcc4 %>% select(c("V1", "V2" , "V3", "V4", "V5", "V7" ))
+	colnames(dmp_450k_rcc4) <- c("chr", "start", "end", "probe", "d_beta","fdr")
+	dmp_450k_rcc4$end <- dmp_450k_rcc4$start
+	dmp_450k_rcc4_hyper <- subset(dmp_450k_rcc4, d_beta > 0 & fdr < 0.05)
+	dmp_450k_rcc4_hyper <- makeGRangesFromDataFrame(dmp_450k_rcc4_hyper, keep.extra.columns=TRUE)
+	
+	dmp_450k_rcc4_hypo <- subset(dmp_450k_rcc4, d_beta < 0 & fdr < 0.05)
+	dmp_450k_rcc4_hypo <- makeGRangesFromDataFrame(dmp_450k_rcc4_hypo, keep.extra.columns=TRUE)
+	
+	dmp_450k_rcc4_tot <- dmp_450k_rcc4
+	dmp_450k_rcc4_tot <- makeGRangesFromDataFrame(dmp_450k_rcc4_tot, keep.extra.columns=TRUE)
+	
+	##load gene name and id list
+	gene_id_name <- read.table("gene_reference.txt", header=F)
+	gene_id_name$V1 <- gsub("\\..*","",gene_id_name$V1)
+	gene_id_name <- gene_id_name[,c(1,3)]
+	
+	
+	
+	hypo_rows_function <- function(enh_wgbs_hypo=NULL, non_filter_total_temp=NULL, total_enh=NULL, gene_info=FALSE, enhancer_overlap=FALSE, rnaseq_overlap=FALSE, hwidth=0) {
+	
+	
+	
+		#filter rows
+	enh_wgbs_hypo_final <- enh_wgbs_hypo 
+	#%>% select(c("V1","methylation_enrichment","hypo_count","total_cpg"))
+	
+	###find the region information by merging with original enhancer file
+	enh_hypo_final <- merge(total_enh, enh_wgbs_hypo_final, by.x="V4", by.y="V1", all.x=T) 
+	
+	#calculate total cpgs for each enhancer
+	enh_hypo_final <- merge(enh_hypo_final, non_filter_total_temp, by.x="V4", by.y="V1", all.x=T)
+	
+	enh_hypo_final[, c(5,6,10)][is.na(enh_hypo_final[, c(5,6,10)])] <- 0
+	#convert to granges object to find overlap with reference (cancer discovery paper) enhancers
+	
+	
+	df_hypo <- makeGRangesFromDataFrame(enh_hypo_final, keep.extra.columns=TRUE)
+	
+	if(enhancer_overlap==TRUE){
+	#find overlapping boolean
+	df_hypo$overlap_Ref_enh_N <- countOverlaps( df_hypo, df_ref_enh_N, ignore.strand=TRUE,type="any")
+	df_hypo$overlap_Ref_enh_T <- countOverlaps( df_hypo, df_ref_enh_T, ignore.strand=TRUE,type="any")
+	
+	df_hypo$overlap_query_enh_T <- countOverlaps( df_hypo, query_enh_T, ignore.strand=TRUE,type="any")
+	
+	df_hypo$overlap_query_enh_N <- countOverlaps( df_hypo, query_enh_N, ignore.strand=TRUE,type="any")
+	
+	}
+	df_hypo_gene_closest <- df_hypo
+	
+	if(gene_info==TRUE){
+	#find the closest gene to each enhancer
+	df_hypo_gene_closest <- merge(df_hypo, closest_gene_temp, by="V4", all.y=T )
+	
+	
+	###RNA seq data overlap
+	df_hypo_gene_closest <- merge(df_hypo_gene_closest, vhlev_H, by.x="closest_gene", by.y="rn", all.x=T)
+	
+	df_hypo_gene_closest <- merge(df_hypo_gene_closest, vhlev_N, by.x="closest_gene", by.y="rn", all.x=T)
+	
+	df_hypo_gene_closest <- merge(df_hypo_gene_closest, patients_diff_genes, by.x="closest_gene", by.y="rn", all.x=T)
+
+	}
+	
+	#####convert hg38 to hg19
+	df_hypo_gene_closest <- as.data.frame(df_hypo_gene_closest)
+	df_hypo_gene_closest$start <- df_hypo_gene_closest$start+ as.integer((df_hypo_gene_closest$end-df_hypo_gene_closest$start)/2)
+	df_hypo_gene_closest$end <- df_hypo_gene_closest$start
+	df_hypo_gene_closest <- makeGRangesFromDataFrame(df_hypo_gene_closest, keep.extra.columns=TRUE)
+	df_hypo_gene_closest_temp <- liftOver(df_hypo_gene_closest, chain) 
+	
+	df_hypo_gene_closest_temp <-  as.data.frame(df_hypo_gene_closest_temp)
+	
+	df_hypo_gene_closest_temp$start <- df_hypo_gene_closest_temp$start - hwidth + 1
+	df_hypo_gene_closest_temp$end <- df_hypo_gene_closest_temp$end + hwidth 
+	
+
+	df_hypo_gene_closest_temp <- makeGRangesFromDataFrame( df_hypo_gene_closest_temp, keep.extra.columns=TRUE)
+	df_hypo <- df_hypo_gene_closest_temp
+	
+	
+	
+	df_hypo$overlap_450k_rcc4_hyper_count <- countOverlaps( df_hypo, dmp_450k_rcc4_hyper, ignore.strand=TRUE,type="any")
+	df_hypo$overlap_450k_rcc4_hypo_count <- countOverlaps( df_hypo, dmp_450k_rcc4_hypo, ignore.strand=TRUE,type="any")
+	df_hypo$overlap_450k_rcc4_total_cpg_count <- countOverlaps( df_hypo, dmp_450k_rcc4_tot, ignore.strand=TRUE,type="any")
+	
+	
+	
+	
+	
+	df_hypo <- df_hypo %>% as.data.frame
+	return(df_hypo)
+	}
+	
+	
+	df_hypo_10kb <- hypo_rows_function(enh_wgbs_hypo=enh_wgbs_hypo_10kb, non_filter_total_temp=non_filter_total_temp_10kb, total_enh=total_enh_10kb, gene_info=T, enhancer_overlap=T, rnaseq_overlap=F,hwidth=5000)
+	df_hypo_10kb <- merge(df_hypo_10kb,gene_id_name , by.x="closest_gene", by.y="V1", all.x=T)
+	
+	df_hypo_1kb <- hypo_rows_function(enh_wgbs_hypo = enh_wgbs_hypo_1kb, non_filter_total_temp=non_filter_total_temp_1kb, total_enh=total_enh_1kb, gene_info=F, enhancer_overlap=T, rnaseq_overlap=T,hwidth=500)
+	
+	###save 1kb enhancer for chromHMM 
+	df_hypo_1kb_save <- select(df_hypo_1kb, c( "seqnames", "start", "end", "V4"))
+	#write.table(df_hypo_1kb_save, file="pooled_all_enh_1kb_for_chromHMM_overlap.bed", quote=F, col.names=F, row.names=F, sep="\t")
+#ela puka
+	
+	
+	#original hwidth=1000
+	df_hypo_promoter <- hypo_rows_function(enh_wgbs_hypo=enh_wgbs_hypo_promoter, non_filter_total_temp=non_filter_total_temp_promoter, total_enh=total_enh_promoter, gene_info=F, enhancer_overlap=F, rnaseq_overlap=F,hwidth=2500)
+	
+	
+	##hypo
+	df_hypo_10kb <- df_hypo_10kb[,c(2:5,9,13,10,11,15,12,14,28:30,16:19,1,31,20:22,24:27)]
+	
+	df_hypo_1kb <- df_hypo_1kb[,c(8,12,9,10,14,11,13,19:21,15:18)]
+	
+	df_hypo_promoter <- df_hypo_promoter[,c(8,12,9,10,14,11,13,15:17)]
+	
+	rename_cols <- function(df=NULL, df_type=NA){
+		if(df_type=="10kb") {
+	colnames(df) <- (c("chr", "start", "end" ,"Width", "Peak", "Methylation enrichment on 10kb region", "WGBS hypomethylated CpGs count on the enhancer 10kb region", "WGBS hypermethylated CpGs count on the enhancer 10kb region", "Total WGBS CpGs on the enhancer 10kb region", "P value of 10 kb region", "FDR of 10kb region", "RCC4_450k_array hypermethylated CpGs count on the enhancer 10kb region", "RCC4_450k_array hypomethylated CpGs count on the enhancer 10kb region", "RCC4_450k_array total CpGs count on the enhancer 10kb region", "Number of Overlaps of 10kb region with reference-lost enhancers in tumor(N)", "Number of overlaps of 10kb region with reference-gained enhancers in tumor(T)", "Overlaps of 10kb region with query-enhancers from tumor samples", "Overlaps of 10kb region with query-enhancers from normal samples", "closest_gene from the centre of enhancer", "Gene name", "distance_to_the_gene_TSS_from_centre_of_enhancer", "log2FoldChange_VHL_vs_EV_H","padj_VHL_vs_EV_H" ,"log2FoldChange_VHL_vs_EV_N","padj_VHL_vs_EV_N" , "log2FoldChange_patients_T_vs_N", "padj_patients_T_vs_N"))
+	} else if(df_type=="1kb"){
+	
+	colnames(df) <- (c("Peak", "Methylation enrichment on 1kb region", "WGBS hypomethylated CpGs count on the enhancer 1kb region", "WGBS hypermethylated CpGs count on the enhancer 1kb region", "Total WGBS CpGs on the enhancer 1kb region", "P value of 1kb region", "FDR of 1kb region", "RCC4_450k_array hypermethylated CpGs count on the enhancer 1kb region", "RCC4_450k_array hypomethylated CpGs count on the enhancer 1kb region", "RCC4_450k_array total CpGs count on the enhancer 1kb region", "Number of Overlaps of 1kb region with reference-lost enhancers in tumor(N)", "Number of overlaps of 1kb region with reference-gained enhancers in tumor(T)", "Overlaps of 1kb region with query-enhancers from tumor samples", "Overlaps of 1kb region with query-enhancers from normal samples"))
+	
+	} else if(df_type=="promoter") {
+	
+	colnames(df) <- (c("Peak", "Methylation enrichment on promoter", "WGBS hypomethylated CpGs count promoter.5kb", "WGBS hypermethylated CpGs count on promoter.5kb", "Total WGBS CpGs on promoter.5kb", "P value of promoter", "FDR of promoter", "RCC4_450k_array hypermethylated CpGs count on promoter", "RCC4_450k_array hypomethylated CpGs count on promoter", "RCC4_450k_array total CpGs count on promoter"))
+	
+	}
+	return(df)
+	}
+	
+	df_hypo_10kb <- rename_cols(df=df_hypo_10kb, df_type="10kb")
+	
+	df_hypo_1kb <- rename_cols(df=df_hypo_1kb, df_type="1kb")
+	
+	df_hypo_promoter <- rename_cols(df=df_hypo_promoter, df_type="promoter")
+	
+	df_hypo_final <- merge(merge(df_hypo_10kb, df_hypo_1kb, by="Peak", all.x=T), df_hypo_promoter, by="Peak", all.x=T)
+	
+	final_df <- df_hypo_final
+	
+	final_df[, c(7:9,12:14,29:31,34:40,42:44,47:49)][is.na(final_df[, c(7:9,12:14,29:31,34:40,42:44,47:49)])] <- 0
+	#final_df[, c(32,33,49,50)][is.na(final_df[, c(32,33,49,50) ])] <- 1
+	
+	enh_rna_vhl_ev_H <- read.csv(file="diff_expressed_enhancer_RNA_VHLEV_Hypoxia.csv")
+	enh_rna_vhl_ev_H <- select(enh_rna_vhl_ev_H, c("X","log2FoldChange","padj"))
+	
+	enh_rna_vhl_ev_n <- read.csv(file="diff_expressed_enhancer_RNA_VHLEV_normoxia.csv")
+	enh_rna_vhl_ev_n <- select(enh_rna_vhl_ev_n, c("X","log2FoldChange","padj"))
+	
+	final_df <- merge(final_df,enh_rna_vhl_ev_H, by.x="Peak", by.y="X", all.x=T)
+	
+	final_df <- merge(final_df,enh_rna_vhl_ev_n ,by.x="Peak", by.y="X", all.x=T)
+	
+	colnames(final_df)[50:53] <- c("log2FoldChange of diff expressed enhancer RNA VHL/EV in hypoxia","FDR of diff expressed enhancer RNA VHL/EV in hypoxia","log2FoldChange of diff expressed enhancer RNA VHL/EV in Normoxia","FDR of diff expressed enhancer RNA VHL/EV in Normoxia")
+	
+	
+	
+	enh_list_downstream <- binom_inner_function(enh_df=gene_downstream_wgbs) 
+	
+	enh_list_downstream <- merge(enh_list_downstream, non_filter_total_temp_downstream, by="V1", all.y=T)
+	
+	enh_list_downstream[, c(2,3)][is.na(enh_list_downstream[, c(2,3)])] <- 0
+	
+	 colnames(enh_list_downstream) <- c("Peak" ,"hypo_count_5kb_downstream", "hyper_count_5kb_downstream", "p_value_5kb_downstream", "methylation_enrichment_5kb_downstream", "total_cpg_5kb_downstream")
+	 
+	 final_df <- merge(final_df, enh_list_downstream, by="Peak", all.x=T)
+	 
+	 final_df[, c(54,55,58)][is.na(final_df[, c(54,55,58)])] <- 0
+	#write.table(final_df, file="resulted enhancers from hypergeometric test using all diff methylated cpgs overlaps with enhancers as background_p_value_combined.csv", quote=F, col.names=T, row.names=F, sep=",")
+	
+	
+	#write.table(final_df, file="resulted enhancers from hypergeometric test using genomic backgroundp_value_combined.csv", quote=F, col.names=T, row.names=F, sep=",")
+	
+		
+	#write.table(final_df, file="resulted enhancers from binomial test_p_value_combined.csv", quote=F, col.names=T, row.names=F, sep=",")
+		
+		#write.table(final_df, file="resulted enhancers from binomial test_p_value_combined_promoter10kb.csv", quote=F, col.names=T, row.names=F, sep=",")
+	#changed the promoter size to from 10kb to 5kb
+	#corrected overlapping issue 2019.02.21
+		write.table(final_df, file="resulted enhancers from binomial test_p_value_combined_promoter5kb_new.csv", quote=F, col.names=T, row.names=F, sep=",")
+	
+	
+```
+

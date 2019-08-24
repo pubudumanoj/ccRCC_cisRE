@@ -1,0 +1,153 @@
+---
+title: "Differential RNA seq of conventional ccRCC patients (tumor/normal)"
+output: html_notebook
+author: "Pubudu Nawarathna"
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+```{r}
+
+#Data file was obtained from the published article as described in the manuscript
+##Scelo, G. et al. Variation in genomic landscape of clear cell renal cell carcinoma across Europe. Nature Communications 5, 5135 (2014).
+
+RNA.reads.raw <- read.csv(file="rawCountMatrix.tsv",row.names = 1,header = T,check.names=T, sep = "\t")
+
+
+#we need to get the sample names from patient.data.sample.sheet.conventional.xlsx
+
+library(openxlsx)
+
+#file was obtained from published article explained in the manuscript 
+#Scelo, G. et al. Variation in genomic landscape of clear cell renal cell carcinoma across Europe. Nature Communications 5, 5135 (2014).
+
+#conventional.cagekid.patients.VHL.mutated<-read.xlsx("patient.data.sample.sheet.conventional.xlsx" ,"patient.data.sample.sheet")
+conventional.cagekid.patients.VHL.mutated<-read.xlsx("seelcted.patient.data.sample.sheet.xlsx" ,"patient.data.sample.sheet")
+
+#filter VHL mutated
+conv.patient.id  <- subset(conventional.cagekid.patients.VHL.mutated, VHL.mutation=="mutation in VHL")
+#filter #conventional
+
+conv.patient.id <- subset(conv.patient.id, DataSet="conventionals")
+#select patient ID
+conv.patient.id <- data.frame(conv.patient.id$PatientID)
+#select unique patient ids
+#Find and drop duplicate elements: duplicated()
+# Remove duplicates based on Sepal.Width columns
+#my_data[!duplicated(my_data$Sepal.Width), ]
+conv.patient.id <- conv.patient.id[!duplicated(conv.patient.id$conv.patient.id.PatientID), ]
+
+
+library("dplyr")
+
+#extract colnames from the data table
+conventional.cagekid.patients.VHL.mutated.columns <- data.frame(colnames(RNA.reads.raw))
+
+#we need to identify patient sample only with paired data
+#for that first remove the T and N
+
+conventional.cagekid.patients.VHL.mutated.columns$column <- "1"
+colnames(conventional.cagekid.patients.VHL.mutated.columns)[1] <- "patients"
+
+#How to remove last n characters from every element in the R vector
+#a$data = substr(a$data,1,nchar(a$data)-3)
+#https://stackoverflow.com/questions/23413331/how-to-remove-last-n-characters-from-every-element-in-the-r-vector
+
+conventional.cagekid.patients.VHL.mutated.columns$patients = substr(conventional.cagekid.patients.VHL.mutated.columns$patients
+                                                                    ,1, nchar(lapply(conventional.cagekid.patients.VHL.mutated.columns$patients, as.character))-1)
+
+
+#then count the number of samples for each patient
+#Counting the number of elements with the values of x in a vector
+#use table(data.frame#column)
+conventional.cagekid.patients.VHL.mutated.columns <- as.data.frame(table(conventional.cagekid.patients.VHL.mutated.columns$patients))
+
+#select rows with freq 2
+conventional.cagekid.patients.VHL.mutated.columns <- subset(conventional.cagekid.patients.VHL.mutated.columns, Freq ==2 )
+colnames(conventional.cagekid.patients.VHL.mutated.columns)[1] <- "patients"
+#convert conv.patient.id a data.frame and then merge with
+#conventional.cagekid.patients.VHL.mutated.columns in order to get the patients in franks data set and overlap with
+#my data set
+
+
+conv.patient.id <- data.frame(conv.patient.id)
+conv.patient.id$patients2  <- "2"
+colnames(conv.patient.id)[1] <- "patients"
+conv.patient.id <- merge(conv.patient.id, conventional.cagekid.patients.VHL.mutated.columns, by="patients")
+conv.patient.id <- conv.patient.id$patients
+
+#add T and N to the end of the id name
+conv.patient.idT <- paste(conv.patient.id, "T", sep = "")
+conv.patient.idN <- paste(conv.patient.id, "N", sep = "")
+#join two lists together
+conv.patient.id <- c(conv.patient.idT,conv.patient.idN)
+#filter samples of patients from franks data which overlaps with my samples (vhl mutated and conventional)
+#http://www.sthda.com/english/wiki/subsetting-data-frame-columns-in-r#select-columns-by-names
+RNA.reads.raw.VHL.mutated <- select(RNA.reads.raw, conv.patient.id)
+
+
+#another matrix should prepare for sample names (3 columns - sample and whether it is normal or tumor, patient)
+coldata.patient <- data.frame(conv.patient.id)
+colnames(coldata.patient) <- "patients"
+coldata.patient$patients = substr(coldata.patient$patients,1, nchar(lapply(coldata.patient$patients, as.character))-1)
+
+coldata.patient <- data.frame(coldata.patient[!duplicated(coldata.patient$patients), ])
+coldata.patientT <- coldata.patient
+colnames(coldata.patientT) <- "patient"
+coldata.patientT$sample <- paste(coldata.patientT$patient, "T", sep = "")
+coldata.patientT$condition <- "T"
+
+coldata.patientN <- coldata.patient
+colnames(coldata.patientN) <- "patient"
+coldata.patientN$sample <- paste(coldata.patientN$patient, "N", sep = "")
+coldata.patientN$condition <- "N"
+
+#join two frames
+coldata.patient <- rbind(coldata.patientT, coldata.patientN)
+all(coldata.patient$sample == colnames(RNA.reads.raw.VHL.mutated))
+rownames(coldata.patient) <- coldata.patient$sample
+all(rownames(coldata.patient) == colnames(RNA.reads.raw.VHL.mutated))
+#remove R380 and R400 only for correlation study
+#RNA.reads.raw.VHL.mutated <- RNA.reads.raw.VHL.mutated[c(1:16,18:21,23:45,47:50,52:dim(RNA.reads.raw.VHL.mutated)[2])]
+#coldata.patient <- coldata.patient[c(1:16,18:21,23:45,47:50,52:dim(coldata.patient)[1]),]
+
+library("DESeq2")
+
+dds <- DESeqDataSetFromMatrix(countData = RNA.reads.raw.VHL.mutated,
+                              colData = coldata.patient,
+                              design = ~ patient+ condition)
+
+
+#specify the reference (control sample)
+dds$condition <- relevel(dds$condition, ref="N")
+
+#print the object
+dds
+
+#Pre-filtering rows with very low counts (i.r 0 counts)
+dds_filtered_RNA<-dds[ rowSums(counts(dds)) > 10, ]
+
+#using this function it automatically combine HTSeq output and prepare the input to the DESeq analysis
+ddsMF_RNA <-DESeq(dds_filtered_RNA)
+
+
+#Results tables are generated using the function results, which extracts a results
+#table with log2 fold changes, p values and adjusted p values
+#FDR cutoff 0.05
+resMF <- results(ddsMF_RNA,alpha=0.05)
+head(resMF)
+
+#get IHW weights for gsea
+library("IHW")
+resIHW <- results(ddsMF_RNA, alpha=0.05, filterFun=ihw)
+#write.csv( resIHW, file="ordered down regulated genes paired conventional vhl mutated patients IHW weights.csv" )
+
+#We can order our results table by the smallest adjusted p value (padj) or p value (pvalue)
+resOrdered <- resMF[order(resMF$padj),]
+head(resOrdered, n=10)
+
+write.csv( resOrdered[ order( resOrdered$log2FoldChange, -resOrdered$baseMean ), ], file="ordered down regulated genes paired conventional patients.csv" )
+
+```
+

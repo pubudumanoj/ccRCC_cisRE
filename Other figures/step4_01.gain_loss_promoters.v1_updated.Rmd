@@ -1,0 +1,654 @@
+---
+title: Relationship between enhancer methylation, promoter methylation, and expression
+  in ccRCC
+author:
+- name: Hamed S. Najafabadi
+output:
+  html_notebook:
+    df_print: paged
+  html_document:
+    df_print: paged
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Functions
+This function will help in calculating and visualizing enrichment values in a 2D graph:
+```{r}
+
+# this function takes two integer variables (dimensions), a background subset, and a test subset, and calculates the enrichment of the test subset over the background subset across the dimensions
+# bkg and test can be logical vectors of the same length as var1 and var2, or numerical vectors that denote a subset of var1 and var2 objects
+# for this function to work properly, it is important for test to be a subset of bkg
+enrichment2D <- function( Var1, Var2, bkg, test, xlab="Variable 1", ylab="Variable 2", const.size=F, logOddsLimit=1, logPLimit=10, color="black" )
+{
+  # create a contingency table for the background subset
+  bkg.table <- as.data.frame( table( Var1[bkg], Var2[bkg] ) )
+  bkg.table$Label <- paste0( bkg.table$Var1, "_", bkg.table$Var2 )
+  
+  # create a contingency table for the test subset
+  test.table <- as.data.frame( table( Var1[test], Var2[test] ) )
+  test.table$Label <- paste0( test.table$Var1, "_", test.table$Var2 )
+  
+  merged <- merge( bkg.table, test.table, by="Label", all=T, suffixes=c(".bkg",".test") )
+  
+  merged <- merged[,c(-5,-6)] # remove columns Var1.test and Var2.test, since they're redundant with Var1.bkg and Var2.bkg, and may contain NAs which would create a warning in the next line
+  merged[is.na(merged)] <- 0
+  
+  # calculate the signed log10 probability of enrichment of the test subset at each given point in the Var1 vs. Var2 grid
+  merged$log10P <- 0
+  merged$log10odds <- 0
+  for( i in 1:nrow(merged) )
+  {
+    x <- matrix( c(
+      sum(merged$Freq.bkg[-i]-merged$Freq.test[-i]),
+      sum(merged$Freq.test[-i]),
+      merged$Freq.bkg[i]-merged$Freq.test[i],
+      merged$Freq.test[i] ),
+      nrow=2, byrow=T )
+    
+    fisherRes <- fisher.test( x, alternative="two.sided" )
+    merged$log10P[i] <- -log10(fisherRes$p.value+1e-100)
+    merged$log10odds[i] <- log10( (x[2,2]+1)/sum(x[,2]+1)/sum(x[2,]+1)*sum(c(x+1)) )
+  }
+  
+  # create a ggplot graph visualizing the results
+  if( const.size )
+  {
+    plot <- ggplot(merged) +
+      geom_tile( aes(
+          x=Var1.bkg,
+          y=Var2.bkg,
+          fill=log10odds ),
+        color=color,
+        width=1,
+        height=1 ) +
+      scale_fill_gradient2( limits=c(-logOddsLimit,logOddsLimit), low="blue", mid="white", high="red", midpoint=0, oob=squish ) +
+      xlab(xlab) +
+      ylab(ylab) +
+      theme_minimal()    
+  } else
+  {
+    plot <- ggplot(merged) +
+      geom_tile( aes(
+          x=Var1.bkg,
+          y=Var2.bkg,
+          fill=log10odds,
+          width=sqrt( squish(log10P,c(0,logPLimit))/logPLimit ),
+          height=sqrt( squish(log10P,c(0,logPLimit))/logPLimit ) ),
+        color=color ) +
+      scale_fill_gradient2( limits=c(-logOddsLimit,logOddsLimit), low="blue", mid="white", high="red", midpoint=0, oob=squish ) +
+      xlab(xlab) +
+      ylab(ylab) +
+      theme_minimal()
+  }
+
+  
+  # return both the contingency table and the ggplot graph
+  return( list( contingency.table=merged, plot=plot ) )
+}
+
+```
+
+This is a function similar to enrichment2D, but uses the number of positive predictions as the size of the grid elements:
+```{r}
+
+# this function takes two integer variables (dimensions), a background subset, and a test subset, and calculates the enrichment of the test subset over the background subset across the dimensions
+# bkg and test can be logical vectors of the same length as var1 and var2, or numerical vectors that denote a subset of var1 and var2 objects
+# for this function to work properly, it is important for test to be a subset of bkg
+visualize.predictions.discrete <- function( Var1, Var2, bkg, test, xlab="Variable 1", ylab="Variable 2", color="black" )
+{
+  # create a contingency table for the background subset
+  bkg.table <- as.data.frame( table( Var1[bkg], Var2[bkg] ) )
+  bkg.table$Label <- paste0( bkg.table$Var1, "_", bkg.table$Var2 )
+  
+  # create a contingency table for the test subset
+  test.table <- as.data.frame( table( Var1[test], Var2[test] ) )
+  test.table$Label <- paste0( test.table$Var1, "_", test.table$Var2 )
+  
+  merged <- merge( bkg.table, test.table, by="Label", all=T, suffixes=c(".bkg",".test") )
+  
+  merged <- merged[,c(-5,-6)] # remove columns Var1.test and Var2.test, since they're redundant with Var1.bkg and Var2.bkg, and may contain NAs which would create a warning in the next line
+  merged[is.na(merged)] <- 0
+  
+  # calculate the signed log10 probability of enrichment of the test subset at each given point in the Var1 vs. Var2 grid
+  merged$log10odds <- 0
+  for( i in 1:nrow(merged) )
+  {
+    x <- matrix( c(
+      sum(merged$Freq.bkg[-i]-merged$Freq.test[-i]),
+      sum(merged$Freq.test[-i]),
+      merged$Freq.bkg[i]-merged$Freq.test[i],
+      merged$Freq.test[i] ),
+      nrow=2, byrow=T )
+    
+    merged$log10odds[i] <- log10( (x[2,2]+1)/sum(x[,2]+1)/sum(x[2,]+1)*sum(c(x+1)) )
+  }
+  
+  merged$size <- merged$Freq.test / max( merged$Freq.test )
+  
+  print(max( merged$Freq.test ))
+  # create a ggplot graph visualizing the results
+  plot <- ggplot(merged) +
+    geom_tile( aes(
+        x=Var1.bkg,
+        y=Var2.bkg,
+        fill=log10odds,
+        width=sqrt( size ),
+        height=sqrt( size ) ),
+      color=color ) +
+    scale_fill_gradient2( limits=c(-1,1), low="blue", mid="white", high="red", midpoint=0, oob=squish ) +
+    xlab(xlab) +
+    ylab(ylab) +
+    theme_minimal()
+
+  
+  # return both the contingency table and the ggplot graph
+  return( list( contingency.table=merged, plot=plot ) )
+}
+
+```
+
+This function performs cross-validation of random forest:
+```{r}
+cv.rf <- function(
+  formula,
+  data,
+  k=10,
+  id = sample(1:k,nrow(data),replace=TRUE) )
+{
+  # create a new matrix where NA values are removed
+  non.na <- apply( cbind(data,id), 1, function(x) sum(is.na(x))==0 )
+  data <- data[non.na,]
+  id <- id[non.na]
+
+  list <- unique(id)
+  predicted <- data.frame()
+  observed <- data.frame()
+  input <- data.frame()
+  
+  cat("left-out-group | n(training) | n(testing)\n")
+  
+  for (i in list)
+  {
+    trainingset <- data[id!=i,] # subset(data, id %in% list[-i])
+    testset <- data[id==i,] # subset(data, id %in% c(i))
+
+    cat( sprintf("%14s | %11i | %10i\n",i,nrow(trainingset),nrow(testset)) )
+    
+    model <- randomForest( target ~ ., data=data )
+    temp <- predict(model, testset, type="prob")
+    
+    
+    input <- rbind(input,testset)
+    predicted <- rbind(predicted, as.data.frame(temp))
+  }
+  
+  return( cbind(input,predicted) )
+}
+
+```
+
+# Preparation
+Load the files and libraries:
+```{r}
+
+library(ggplot2)
+library(ggforce)
+library(gridExtra)
+library(scales)
+library(randomForest)
+library(IHW)
+library(pROC)
+library(fields)
+library(matlab)
+library(stringr)
+
+set.seed(1500)
+# Load the big data table
+
+
+table <- read.csv("resulted diff_promoters from binomial test_p_value_combined_promoter_5kb_new.csv")
+
+#table <- read.csv("resulted diff_promoters from binomial test_p_value_combined_promoter_5kb_combined_added_othergenes_added_5kbdownstream.csv")
+
+#table <- read.csv("resulted diff_promoters from binomial test_p_value_combined_promoter_5kb_add_perc_meth.csv")
+
+table <- unique(table)
+
+table <- subset(table, table$distance_to_the_gene_TSS_from_centre_of_enhancer < 10000 & table$distance_to_the_gene_TSS_from_centre_of_enhancer > -10000 )
+```
+
+# Calculating p-values for 10kb enhancer region (this p-value corresponds to imbalance between hypo- and hyper-methylated CpGs)
+```{r}
+# Recalculate the p-values, but using a two-sided binomial test (Pubudu had calculated it as the smallest of two binomial tests, one corresponding to "less" and one to "greater" as the alternative hypothesis)
+table$P.value.of.10.kb.region <- apply( table, 1, function(x){ if(is.na(x[7])|is.na(x[8])|as.numeric(x[7])+as.numeric(x[8])==0){ return(NA) } else{ binom.test(as.numeric(x[7]),as.numeric(x[7])+as.numeric(x[8]),alternative="two.sided")$p.value } } )
+
+# Use IHW to calculate adjusted p-values, optimizing for alpha=0.1
+# n is the vector of differentially methylated CpGs per enhancer
+n <- table$WGBS.hypomethylated.CpGs.count.on.the.enhancer.10kb.region + table$WGBS.hypermethylated.CpGs.count.on.the.enhancer.10kb.region
+ihwRes <- ihw(table$P.value.of.10.kb.region ~ n, alpha=0.1)
+
+# Compare the number of rejections with the new method and Pubudu's calculations
+plot( table$FDR.of.10kb.region, adj_pvalues(ihwRes),
+      xlab="FDR computed by Pubudu", ylab="FDR using IHW and two-sided binomial test",
+      main="Identification of hypo- and hyper-methylated enhancers")
+
+print( table( table$FDR.of.10kb.region <= 0.1, adj_pvalues(ihwRes) <= 0.1 ) )
+# (It seems like the results are identical, so now we can use the IHW weights to filter the genes)
+table$FDR.of.10kb.region <- adj_pvalues(ihwRes) # Substitute the FDRs with those calculated by IHW
+
+# redefine the methylation status of each enhancer - hypo: significant imbalance toward hypomethylation; hyper: significant imbalance toward hypermethylation; none: no significant imbalance
+
+table$Methylation.enrichment.on.10kb.region <- "none"
+table$Methylation.enrichment.on.10kb.region[ table$FDR.of.10kb.region <= 0.1 & table$WGBS.hypomethylated.CpGs.count.on.the.enhancer.10kb.region > table$WGBS.hypermethylated.CpGs.count.on.the.enhancer.10kb.region ] <- "hypo"
+table$Methylation.enrichment.on.10kb.region[ table$FDR.of.10kb.region <= 0.1 & table$WGBS.hypomethylated.CpGs.count.on.the.enhancer.10kb.region < table$WGBS.hypermethylated.CpGs.count.on.the.enhancer.10kb.region ] <- "hyper"
+table$Methylation.enrichment.on.10kb.region <- as.factor(table$Methylation.enrichment.on.10kb.region)
+print( summary( table$Methylation.enrichment.on.10kb.region ) )
+
+```
+
+# Calculating the fraction of enhancers that are unbalanced
+
+Plot the IHW weights:
+```{r}
+hist(weights(ihwRes),breaks=100)
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/supfig1/supfig1_l_promoter_cpg_stat_power.pdf", height=5,width=7)
+plot(n,weights(ihwRes),
+     xlab="Number of CpGs in 10kb enhancer region", ylab="IHW weight",
+     main="Relationship between number of CpGs and statistical power")
+#dev.off()
+```
+
+It seems like there is a clear separation between enhancers with < 5 CpGs and those with >= 5 CpGs. The ones with >= 5 CpGs obtain weights close to 2. So, let's limit our analysis to this subset of enhancers:
+```{r}
+methylation.filter <- weights(ihwRes) > 1
+methylation.filter[is.na(methylation.filter)] <- F
+
+cat( paste0( "The fraction of enhancers with unbalanced methylation: ",
+               round( sum(table$FDR.of.10kb.region[methylation.filter]<=0.1,na.rm = T) / sum(methylation.filter,na.rm=T), digits = 2 ),
+             "\n") )
+
+```
+
+# Correlation between methylation, gene expression, and gain or loss of enhancers
+
+## Is there any relationship between our methylation data and whether an enhancer is found in tumor/normal?
+Now, using the above function, let's look at the enrichment of hypo- and hyper-methylated enhancers among those with different degrees of overlap with tumour/normal enhancers:
+```{r}
+
+hypo.results <- enrichment2D(
+  table$Overlaps.of.10kb.region.with.query.enhancers.from.normal.samples,
+  table$Overlaps.of.10kb.region.with.query.enhancers.from.tumor.samples,
+  methylation.filter, # the background is the set of enhancers with IHW weight above 1.5 (i.e. those with enough statistical power to enable detection of methylation imbalance)
+  methylation.filter & table$Methylation.enrichment.on.10kb.region=="hypo",
+  str_wrap("Overlap with promoters found in normal samples",width=30),
+  str_wrap("Overlap with promoters found in tumor samples",width=30) )
+
+hyper.results <- enrichment2D(
+  table$Overlaps.of.10kb.region.with.query.enhancers.from.normal.samples,
+  table$Overlaps.of.10kb.region.with.query.enhancers.from.tumor.samples,
+  methylation.filter, # the background set is the set of enhancers that have IHW
+  methylation.filter & table$Methylation.enrichment.on.10kb.region=="hyper",
+  str_wrap("Overlap with promoters found in normal samples",width=30),
+  "" )
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 2/fig2_b_promoter_promoter_overlap_scales.pdf", height=5,width=8)
+grid.arrange(
+  hypo.results$plot +
+    ggtitle(str_wrap("Enrichment of hypo-methylated promoters",width=30)) +
+    guides(fill=F),
+  hyper.results$plot +
+    ggtitle(str_wrap("Enrichment of hyper-methylated promoters",width=30)) +
+    guides(fill=F)  ,
+  nrow=1)
+#dev.off()
+```
+It seems like hypo-methylated cases (left) are enriched among enhancers that are found in tumors but not in normal samples, suggesting that hypo-methylation is in fact a good indicator of gain of enhancers. Conversely, hyper-methylated enhancers (right) are significantly enriched among those that are found in normal samples but not tumor, suggesting that hyper-methylation is a good indication of loss of enhancer. In other words, our methylation data is consistent with whether we have found an enhancer in tumor or in normal samples.
+
+
+## Do our data agree with gain or loss of enhancers observed by Yao et al. (Cancer Discovery, 2017)?
+We will examine this by calculating the enrichment of gained or lost enhancers, as defined by Yao et al., among our enhancers after stratifying for various properties (i.e. hypo- or hyper-methylation, or whether we have found an enhancer in tumor or normal samples):
+```{r}
+
+gain_TN <- enrichment2D(
+  table$Overlaps.of.10kb.region.with.query.enhancers.from.normal.samples,
+  table$Overlaps.of.10kb.region.with.query.enhancers.from.tumor.samples,
+  !is.na(table$Number.of.overlaps.of.10kb.region.with.reference.gained.enhancers.in.tumor.T.), # the background is the set of enhancers with non-NA overlap number,
+  !is.na(table$Number.of.overlaps.of.10kb.region.with.reference.gained.enhancers.in.tumor.T.) & table$Number.of.overlaps.of.10kb.region.with.reference.gained.enhancers.in.tumor.T. > 0, # the test is the set of enhancers with at least one overlap with gained enhancers from Yao et al.
+  str_wrap("Overlap with promoters found in normal samples",30),
+  str_wrap("Overlap with promoters found in tumor samples",30) )
+
+loss_TN <- enrichment2D(
+  table$Overlaps.of.10kb.region.with.query.enhancers.from.normal.samples,
+  table$Overlaps.of.10kb.region.with.query.enhancers.from.tumor.samples,
+  !is.na(table$Number.of.Overlaps.of.10kb.region.with.reference.lost.enhancers.in.tumor.N.), # the background is the set of promoters with non-NA overlap number,
+  !is.na(table$Number.of.Overlaps.of.10kb.region.with.reference.lost.enhancers.in.tumor.N.) & table$Number.of.Overlaps.of.10kb.region.with.reference.lost.enhancers.in.tumor.N. > 0, # the test is the set of enhancers with at least one overlap with gained promoters from Yao et al.
+  str_wrap("Overlap with promoters found in normal samples",30),
+  "" )
+
+gain_methyl <- enrichment2D(
+  table$WGBS.hypermethylated.CpGs.count.on.the.enhancer.10kb.region,
+  table$WGBS.hypomethylated.CpGs.count.on.the.enhancer.10kb.region,
+  !is.na(table$Number.of.overlaps.of.10kb.region.with.reference.gained.enhancers.in.tumor.T.), # the background is the set of enhancers with non-NA overlap number,
+  !is.na(table$Number.of.overlaps.of.10kb.region.with.reference.gained.enhancers.in.tumor.T.) & table$Number.of.overlaps.of.10kb.region.with.reference.gained.enhancers.in.tumor.T. > 0, # the test is the set of enhancers with at least one overlap with gained promoters from Yao et al.
+  str_wrap("Number of hyper-methylated CpGs",30),
+  str_wrap("Number of hypo-methylated CpGs",30) )
+
+loss_methyl <- enrichment2D(
+  table$WGBS.hypermethylated.CpGs.count.on.the.enhancer.10kb.region,
+  table$WGBS.hypomethylated.CpGs.count.on.the.enhancer.10kb.region,
+  !is.na(table$Number.of.Overlaps.of.10kb.region.with.reference.lost.enhancers.in.tumor.N.), # the background is the set of promoters with non-NA overlap number,
+  !is.na(table$Number.of.Overlaps.of.10kb.region.with.reference.lost.enhancers.in.tumor.N.) & table$Number.of.Overlaps.of.10kb.region.with.reference.lost.enhancers.in.tumor.N. > 0, # the test is the set of enhancers with at least one overlap with gained promoters from Yao et al.
+  str_wrap("Number of hyper-methylated CpGs",30),
+  "" )
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 2/fig2_f_yaoetal_promoter_scales.pdf", height=5,width=8)
+grid.arrange(
+  gain_TN$plot +
+    ggtitle(str_wrap("Enrichment of gained promoters (Yao et al.)",width=30)) +
+    guides(fill=F),
+  loss_TN$plot +
+    ggtitle(str_wrap("Enrichment of lost promoters  (Yao et al.)",width=30)) +
+    guides(fill=F),
+  nrow=1)
+#dev.off()
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 2/fig2_d_promoter_methylation_scales.pdf", height=5,width=7)
+grid.arrange(
+  gain_methyl$plot +
+    ggtitle(str_wrap("Enrichment of gained promoters (Yao et al.)",width=30)) +
+    guides(fill=F),
+  loss_methyl$plot +
+    ggtitle(str_wrap("Enrichment of lost promoters  (Yao et al.)",width=30)) +
+    guides(fill=F),
+  nrow=1)
+#dev.off()
+
+```
+
+Overall, there is excellent agreement between our data and Yao et al. data. So, can we use our data to pinpoint enhancers that are gained or lost in tumors by integrating methylation and ChIP-seq data? This is what we will explore in the next section.
+
+
+# Identifying gain and loss of enhancer events by integrating ChIP-seq and DNA methylation data
+While we have ChIP-seq data from different histone marks from tumor and normal samples, which we have used to identify enhancers, these data do not have enough quality and statistical power to identify gain or loss events confidently. However, as shown above, DNA methylation provides additional information that correlates with gain or loss of enhancers. The idea is to use a *machine learning* approach in order to integrate DNA methylation with the tumor/normal enhancer labels for identifying high-confidence gain or loss events.
+For such a machine learning approach to work, we would need a "gold standard" set of known gain or loss events, which can be extracted from Yao et al. study. The idea is that we will learn the patterns that demarcate gain/loss events using this gold standard, and then will use these patterns to identify more gain/loss events.
+
+Our target is to predict whether a *1kb* region centered on an enhancer overlaps a "gain" event or a "loss" event from Yao et al. Our predictors include the number of overlapping enhancers from tumor or normal samples in our study (at both 1kb and 10kb resolutions), and the number of hypo- and hyper-methylated CpGs (at both 1kb and 10kb resolutions).
+
+## Training the classifier
+
+```{r}
+
+# first, let's define our target (gold standard): any enhancer that overlaps a gain event in Yao et al. is marked as TRUE, any enhancer that overlaps a loss event in Yao et al. is marked as FALSE, and other enhancers are marked as NA (and therefore will not be used during the training of the classifier). It is important to set these non-overlapping enhancers as NAs, given that we do not know if there are any true gain/loss events among them.
+gain <- table$Number.of.overlaps.of.1kb.region.with.reference.gained.enhancers.in.tumor.T. > 0
+loss <- table$Number.of.Overlaps.of.1kb.region.with.reference.lost.enhancers.in.tumor.N. > 0
+target <- gain # in the target, a gain is TRUE, and a loss is FALSE
+target[ gain & loss ] <- NA # anything that overlaps both gain and loss should be removed
+target[ !gain & !loss ] <- NA # anything that overlaps neither gain nor loss should be removed
+#target[ table$distance > 0 ] <- NA
+#target[ table$distance < -5000 ] <- NA
+
+# create a data frame of the covariates, including the target for prediction
+covariates <- data.frame(
+  target = as.factor( target ),
+  hypo1kb = table$WGBS.hypomethylated.CpGs.count.on.the.enhancer.1kb.region,
+  hyper1kb = table$WGBS.hypermethylated.CpGs.count.on.the.enhancer.1kb.region,
+  CpG1kb = table$Total.WGBS.CpGs.on.the.enhancer.1kb.region,
+  hypo10kb = table$WGBS.hypomethylated.CpGs.count.on.the.enhancer.10kb.region,
+  hyper10kb = table$WGBS.hypermethylated.CpGs.count.on.the.enhancer.10kb.region,
+  CpG10kb = table$Total.WGBS.CpGs.on.the.enhancer.10kb.region,
+  overlap_normal1kb = table$Overlaps.of.1kb.region.with.query.enhancers.from.normal.samples,
+  overlap_tumor1kb = table$Overlaps.of.1kb.region.with.query.enhancers.from.tumor.samples,
+  overlap_normal10kb = table$Overlaps.of.10kb.region.with.query.enhancers.from.normal.samples,
+  overlap_tumor10kb = table$Overlaps.of.10kb.region.with.query.enhancers.from.tumor.samples
+  #,
+  #dissign = sign(table$distance_to_the_gene_TSS_from_centre_of_enhancer)
+  # ,
+  # hypo1kb_20 = table$hypo_count20_1kb,
+  # hyper1kb_20 = table$hyper_count20_1kb,
+  # hypo10kb_20 = table$hypo_count20_10kb,
+  # hyper10kb_20 = table$hyper_count20_10kb,
+  # 
+  # hypo1kb_40 = table$hypo_count40_1kb,
+  # hyper1kb_40 = table$hyper_count40_1kb,
+  # hypo10kb_40 = table$hypo_count40_10kb,
+  # hyper10kb_40 = table$hyper_count40_10kb,
+  # 
+  # hypo1kb_60 = table$hypo_count60_1kb,
+  # hyper1kb_60 = table$hyper_count60_1kb,
+  # hypo10kb_60 = table$hypo_count60_10kb,
+  # hyper10kb_60 = table$hyper_count60_10kb
+  )
+
+# train the model using default parameters of the random forest function
+gain_loss_model <- randomForest( target ~ ., data=covariates, na.action = na.omit )
+# predict gain/loss using this model
+predicted <- predict(gain_loss_model, covariates, type="prob")
+
+# add the predictions to the table
+table$gain_model_score <- predicted[,2]
+table$loss_model_score <- predicted[,1]
+table$predicted_gain <- predicted[,2] >= 0.95 # our probability cutoff is 0.95
+table$predicted_loss <- predicted[,1] >= 0.95
+
+summary(table$predicted_gain)
+summary(table$predicted_loss)
+
+ # Mode   FALSE    TRUE    NA's 
+#logical    7191   13634   19883 
+ #  Mode   FALSE    TRUE    NA's 
+#logical   20170     655   19883
+```
+
+
+## Evaluating the classifier
+
+We will use cross-validation on the gold standard dataset in order to evaluate our classification approach. In this cross-validation, all enhancers from one chromosome are held-out for testing, and the classifier is trained on the other chromosomes. Then, the held-out data will be predicted (leave-one-chromosome-out cross-validation). This ensures that local information will not be leaked across nearby enhancers during the training and testing phases:
+
+```{r}
+
+cv.result <- cv.rf( target ~ ., covariates, id=table$chr ) # use "chr" as the id for dividing the observations into training and testing
+
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/supfig2/supfig2_a_promoters_roc.pdf", height=5,width=8)
+# draw the ROC curve
+par(mfrow=c(1,2))
+proc <- roc( (cv.result[,1]==T), cv.result[,ncol(cv.result)] ) # the first column of cv.result is the target, and the last column is the probability of being in the T class
+cutoff <- min( which(proc$threshold > 0.95) )
+print(paste0("At 0.95 cutoff, the sensitivity and specificity for predicting gained enhancers is ", round(proc$sensitivities[cutoff],2), " and ", round(proc$specificities[cutoff],2), ", respectively."))
+plot(proc,main=str_wrap("Predicting gained promoters",20))
+#lines( proc$specificities, proc$thresholds, lty=2 )
+
+
+proc <- roc( (cv.result[,1]==F), cv.result[,ncol(cv.result)-1] ) # the first column of cv.result is the target, and the one-to-last column is the probability of being in the T class
+cutoff <- min( which(proc$threshold > 0.95) )
+print(paste0("At 0.95 cutoff, the sensitivity and specificity for predicting lost enhancers is ", round(proc$sensitivities[cutoff],2), " and ", round(proc$specificities[cutoff],2), ", respectively."))
+plot(proc,main=str_wrap("Predicting lost promoters",20))
+
+#dev.off()
+#lines( proc$specificities, proc$thresholds, lty=2 )
+
+```
+```{r}
+proc
+```
+
+It appears that the classifier is working! There is very high specificity at very high sensitivity.
+
+## Exploring the inner workings of the classifier
+
+How do different variables affect its behaviour? We use the properties of the enhancers and their predicted values to address this question. Specifically, we will stratify the enhancers based on their properties, and will visualizing the number and enrichment of positive and negative predictions in each stratum.
+
+```{r}
+# create a data frame with the subset of the covariates that have non-NA predictor variables, perform prediction, and then use these predictions to understand the behaviour of the classifier
+synth.cov <- covariates[,-1]
+synth.cov <- synth.cov[apply(synth.cov,1,function(x)sum(is.na(x))==0),] # remove anything with NA
+
+# now, run the model on the synthetic data
+synth.predicted <- predict(gain_loss_model,synth.cov,type="prob")
+
+```
+
+
+How does the classifier deal with methylation?
+```{r}
+gain <- visualize.predictions.discrete(
+  synth.cov$hyper10kb,
+  synth.cov$hypo10kb,
+  rep(T,nrow(synth.cov)),
+  synth.predicted[,2] > 0.8,
+  str_wrap("Number of hyper-methylated CpGs",30),
+  str_wrap("Number of hypo-methylated CpGs",50) )
+loss <- visualize.predictions.discrete(
+  synth.cov$hyper10kb,
+  synth.cov$hypo10kb,
+  rep(T,nrow(synth.cov)),
+  synth.predicted[,1] > 0.8,
+  str_wrap("Number of hyper-methylated CpGs",30),
+  "" )
+nochange <- visualize.predictions.discrete(
+  synth.cov$hyper10kb,
+  synth.cov$hypo10kb,
+  rep(T,nrow(synth.cov)),
+  synth.predicted[,1] < 0.8 & synth.predicted[,2] < 0.8,
+  str_wrap("Number of hyper-methylated CpGs",30),
+  "" )
+
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 3/fig3_a_predicted_promoter_methylation2.pdf", height=5,width=10.5)
+grid.arrange(
+  gain$plot +
+    ggtitle( str_wrap("Integrated gained PREs", 25) ) +
+    guides(fill=F),
+  loss$plot +
+    ggtitle( str_wrap("Integrated lost PREs", 20) ) +
+    guides(fill=F),
+  nochange$plot +
+    ggtitle( str_wrap("Integrated stable PREs", 25) ) +
+    guides(fill=F),
+  nrow=1)
+#dev.off()
+
+```
+
+Regardless of the methylation status, does the number of CpGs in the enhancer has an effect?
+```{r}
+
+gain <- visualize.predictions.discrete(
+  synth.cov$CpG1kb,
+  synth.cov$CpG10kb,
+  rep(T,nrow(synth.cov)),
+  synth.predicted[,2] > 0.95,
+  str_wrap("Total number of CpGs at 1kb region",30),
+  str_wrap("Total number of CpGs at 10kb region",50),
+  NA)
+loss <- visualize.predictions.discrete(
+  synth.cov$CpG1kb,
+  synth.cov$CpG10kb,
+  rep(T,nrow(synth.cov)),
+  synth.predicted[,1] > 0.95,
+  str_wrap("Total number of CpGs at 1kb region",30),
+  "",
+  NA )
+nochange <- visualize.predictions.discrete(
+  synth.cov$CpG1kb,
+  synth.cov$CpG10kb,
+  rep(T,nrow(synth.cov)),
+  synth.predicted[,1] < 0.95 & synth.predicted[,2] < 0.95,
+  str_wrap("Total number of CpGs at 1kb region",30),
+  "",
+  NA )
+grid.arrange(
+  gain$plot +
+    ggtitle( str_wrap("Predicted gained promoters", 25) ) +
+    guides(fill=F),
+  loss$plot +
+    ggtitle( str_wrap("Predicted lost promoters", 25) ) +
+    guides(fill=F),
+  nochange$plot +
+    ggtitle( str_wrap("Predicted stable promoters", 25) ) +
+    guides(fill=F),
+  nrow=1)
+
+```
+
+How does the classifier deal with tumor / normal enhancer overlap?
+```{r}
+gain <- visualize.predictions.discrete(
+  synth.cov$overlap_normal10kb,
+  synth.cov$overlap_tumor10kb,
+  rep(T,nrow(synth.cov)),
+  synth.predicted[,2] > 0.95,
+  str_wrap("Overlap with promoters found in normal samples",30),
+  str_wrap("Overlap with promoters found in tumor samples",30) )
+loss <- visualize.predictions.discrete(
+  synth.cov$overlap_normal10kb,
+  synth.cov$overlap_tumor10kb,
+  rep(T,nrow(synth.cov)),
+  synth.predicted[,1] > 0.95,
+  str_wrap("Overlap with promoters found in normal samples",30),
+  str_wrap("Overlap with promoters found in tumor samples",30) )
+nochange <- visualize.predictions.discrete(
+  synth.cov$overlap_normal10kb,
+  synth.cov$overlap_tumor10kb,
+  rep(T,nrow(synth.cov)),
+  synth.predicted[,1] < 0.95 & synth.predicted[,2] < 0.95,
+  str_wrap("Overlap with promoters found in normal samples",30),
+  "" )
+#pdf(file="C:/Users/pubud/Dropbox/thesis/graphs/fig 3/fig3_b_predicted_promoter_tissue.pdf", height=5,width=13)
+grid.arrange(
+  gain$plot +
+    ggtitle( str_wrap("Integreated gained PREs", 25) ) +
+    guides(fill=F),
+  loss$plot +
+    ggtitle( str_wrap("Integreated lost PREs", 25) ) +
+    guides(fill=F),
+  nochange$plot +
+    ggtitle( str_wrap("Integreated stable PREs", 25) ) +
+    guides(fill=F),
+  nrow=1)
+#dev.off()
+```
+
+The above graph shows that, for example, some of the enhancers that overlap 1 enhancer from tumor and 1 from normal are classified as gained, lost, or stable. This is obviously because of differences in methylation; but how do they look like in terms of methylation?
+```{r}
+
+gain <- visualize.predictions.discrete(
+  synth.cov$hyper10kb,
+  synth.cov$hypo10kb,
+  synth.cov$overlap_normal10kb == 1 & synth.cov$overlap_tumor10kb == 1,
+  synth.cov$overlap_normal10kb == 1 & synth.cov$overlap_tumor10kb == 1 & synth.predicted[,2] > 0.95,
+  str_wrap("Number of hyper-methylated CpGs",30),
+  str_wrap("Number of hyper-methylated CpGs",50) )
+loss <- visualize.predictions.discrete(
+  synth.cov$hyper10kb,
+  synth.cov$hypo10kb,
+  synth.cov$overlap_normal10kb == 1 & synth.cov$overlap_tumor10kb == 1,
+  synth.cov$overlap_normal10kb == 1 & synth.cov$overlap_tumor10kb == 1 & synth.predicted[,1] > 0.95,
+  str_wrap("Number of hyper-methylated CpGs",30),
+  "" )
+nochange <- visualize.predictions.discrete(
+  synth.cov$hyper10kb,
+  synth.cov$hypo10kb,
+  synth.cov$overlap_normal10kb == 1 & synth.cov$overlap_tumor10kb == 1,
+  synth.cov$overlap_normal10kb == 1 & synth.cov$overlap_tumor10kb == 1 & synth.predicted[,1] < 0.95 & synth.predicted[,2] < 0.95,
+  str_wrap("Number of hyper-methylated CpGs",30),
+  "" )
+grid.arrange(
+  gain$plot +
+    ggtitle( str_wrap("Predicted gained enhancers", 25) ) +
+    guides(fill=F),
+  loss$plot +
+    ggtitle( str_wrap("Predicted lost enhancers", 25) ) +
+    guides(fill=F),
+  nochange$plot +
+    ggtitle( str_wrap("Predicted stable enhancers", 25) ) +
+    guides(fill=F),
+  nrow=1)
+
+```
+
+# Write the updated table and the environment variables, and show the session info
+```{r}
+write.table( table, "01.gain_loss_promoters.table.csv", sep=",", quote=T, row.names=F )
+save(list=ls(),file="01.gain_loss_promoters.table.RData")
+
+sessionInfo()
+```
+
+

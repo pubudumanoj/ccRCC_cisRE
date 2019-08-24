@@ -1,0 +1,468 @@
+---
+title: "Sup figure S1"
+output: html_notebook
+- name: Pubudu Nawarathna, McGill University, Montreal, Canada
+editor_options: 
+  chunk_output_type: inline
+---
+
+##compare our peaks with roadmap peaks
+
+Download these files
+
+```{bash}
+#current folder is the folder where you find these scripts (src folder)
+#run the script from current folder.
+#Relative paths are defined based on the src folder
+
+cd ../../files
+wget "https://egg2.wustl.edu/roadmap/data/byFileType/peaks/unconsolidated/broadPeak/BI.Adult_Kidney.H3K4me1.153.broadPeak.gz"
+wget "https://egg2.wustl.edu/roadmap/data/byFileType/peaks/unconsolidated/broadPeak/BI.Adult_Kidney.H3K4me3.153.broadPeak.gz"
+wget "https://egg2.wustl.edu/roadmap/data/byFileType/peaks/unconsolidated/broadPeak/BI.Adult_Kidney.H3K27ac.153.broadPeak.gz"
+
+gunzip BI.Adult_Kidney.H3K27ac.153.broadPeak.gz
+gunzip BI.Adult_Kidney.H3K4me3.153.broadPeak.gz
+gunzip BI.Adult_Kidney.H3K4me1.153.broadPeak.gz
+
+# we only need first 3 columns
+#chr7    2392571 2395138 Rank_1  388     .       14.10639        41.65237        38.84113
+#chr6    32933435        32944820        Rank_2  368     .       12.98961        39.78458        36.88545
+#chr9    3524918 3527898 Rank_3  360     .       13.42828        39.01160        36.01634
+#chr1    174967389       174969870       Rank_4  347     .       13.00126        37.78591        34.75619
+#chr2    25193282        25196619        Rank_5  337     .       13.22181        36.68840        33.70427
+```
+
+
+####Counting overlaps of histone peaks and road map epigenome peaks (unconsolidated adult kidney)
+
+https://egg2.wustl.edu/roadmap/data/byFileType/peaks/unconsolidated/broadPeak/
+
+```{r}
+
+
+#first need to convert them to GRCh38. they are mapped to hg19
+
+	#module load gcc/5.4.0 r-bundle-bioconductor/3.4
+
+	#first need to convert HG19 to HG38 over chain
+setwd("../../files")	
+
+library(dplyr)
+library(data.table)
+library(stringi)
+library(GenomicRanges)
+library(rtracklayer)
+hg19togrc38 <- function (fileN=NULL){
+#load chain file
+chain <- import.chain("hg19ToHg38.over.chain")
+
+#load subject file
+a <- fread(file=fileN)
+
+#select columns
+a <- a[,c(1:3)]
+colnames(a) <- c("chr","start","end")
+
+df<- makeGRangesFromDataFrame(a, keep.extra.columns=TRUE)
+
+#convert to hg38    
+tx_hg19 <- liftOver(df, chain) %>% as.data.frame
+	
+	 tx_hg19 <- select(tx_hg19, c("seqnames","start","end"))
+	 return(tx_hg19)
+}
+
+
+	 write.table(hg19togrc38( fileN="BI.Adult_Kidney.H3K4me1.153.broadPeak"), file="BI.Adult_Kidney.H3K4me1.153.grc38.broadPeak", sep="\t", col.names=F, row.names=F, quote=F)
+	 
+	 write.table(hg19togrc38( fileN="BI.Adult_Kidney.H3K27ac.153.broadPeak"), file="BI.Adult_Kidney.H3K27ac.153.grc38.broadPeak", sep="\t", col.names=F, row.names=F, quote=F)
+	 
+	 write.table(hg19togrc38( fileN="BI.Adult_Kidney.H3K4me3.153.broadPeak"), file="BI.Adult_Kidney.H3K4me3.153.grc38.broadPeak", sep="\t", col.names=F, row.names=F, quote=F)
+	
+
+	
+```
+
+
+```{bash}
+
+	
+#here we re-shuffle roadmap pekas randomly so we can compare that our peaks will show a higher overlap than this randomly shuffled regions
+
+#use bedtools shuffle
+
+module load gcc/5.4.0 bedtools/2.26.0
+
+#Keep features in -i on the same chromosome. Solely permute their location on the chromosome. By default, both the chromosome and position are randomly chosen.
+#so -chrom will be used
+#seed size will be used reproduce the same results
+
+wget http://hgdownload.cse.ucsc.edu/goldenPath/hg38/bigZips/hg38.chrom.sizes
+
+bedtools shuffle -i BI.Adult_Kidney.H3K27ac.153.grc38.broadPeak -g hg38.chrom.sizes -chrom -seed 1600 -noOverlapping > BI.Adult_Kidney.H3K27ac.153.grc38.random_seed1600.broadPeak
+
+bedtools shuffle -i BI.Adult_Kidney.H3K4me1.153.grc38.broadPeak -g hg38.chrom.sizes -chrom -seed 1600 -noOverlapping > BI.Adult_Kidney.H3K4me1.153.grc38.random_seed1600.broadPeak
+
+bedtools shuffle -i BI.Adult_Kidney.H3K4me3.153.grc38.broadPeak -g hg38.chrom.sizes -chrom -seed 1600 -noOverlapping > BI.Adult_Kidney.H3K4me3.153.grc38.random_seed1600.broadPeak
+
+
+```
+
+
+
+```{r}
+library(GenomicRanges)
+library(rtracklayer)
+
+```
+
+##Supplementary figure S1A function
+Function for calculate overlapping percentage
+```{r}
+
+chi_overlap_barplot <- function(df=NULL, mark=NULL, random_ref=F){
+#load files 
+  if(random_ref==F){
+  ref_h3k27ac <- fread(paste0("BI.Adult_Kidney.",mark,".153.grc38.broadPeak"))
+} else{
+  ref_h3k27ac <- fread(paste0("BI.Adult_Kidney.",mark,".153.grc38.random_seed1600.broadPeak"))
+}
+  
+ref_h3k27ac <- select(ref_h3k27ac, c("V1","V2","V3"))
+colnames(ref_h3k27ac) <- c("chr", "start", "end" )
+#create chromosome list
+	chr_list <- c(paste0(rep("chr", 22),1:22), "chrX","chrY")
+
+
+ref_h3k27ac <- ref_h3k27ac[ref_h3k27ac$chr %in% chr_list,]
+#convert to genomic ranges
+	ref_h3k27ac <- makeGRangesFromDataFrame(ref_h3k27ac, keep.extra.columns=TRUE)
+	
+
+	
+	query_h3k27ac <- fread(paste0("makepeaks/",df))
+	
+
+colnames(query_h3k27ac) <- c("chr", "start", "end" )
+
+#Filter regions in chr1-22 and x and y
+
+query_h3k27ac <- query_h3k27ac[query_h3k27ac$chr %in% chr_list,]
+	
+	query_h3k27ac <- makeGRangesFromDataFrame(query_h3k27ac, keep.extra.columns=TRUE)
+		tot <- length(query_h3k27ac)
+	overlap_my_ref <- countOverlaps(  query_h3k27ac,ref_h3k27ac, ignore.strand=TRUE,type="any")
+
+	overlap_my_ref <- subset(overlap_my_ref, overlap_my_ref > 0)
+overlap <- 	length(overlap_my_ref)
+
+#Return the percentage
+return(overlap/tot*100)
+}
+	
+```
+
+##Supplementary figure S1A figure
+
+Function for draw the overlapping % bar plot
+```{r}
+chip_overlap_barplot_draw <- function(df=NULL, ylab=paste0("% Peak overklap with \nRoadmap")){
+  
+  ggplot(df, aes(fill=Tissue, y=V3, x=patient)) + 
+    geom_bar(position="dodge", stat="identity", colour="black", size=2)+
+   theme_bw()+
+   scale_fill_manual(values=c("red", "blue"))+
+    scale_y_continuous( limit=c(0,100))+
+          #  guides(fill=guide_legend(nrow=2,byrow=TRUE))+
+          theme(plot.title = element_text(size=12), legend.position = "bottom", text = element_text(size=29),
+          axis.text = element_text( size=21), legend.key.size = unit(1.5, 'lines'), 
+          panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+						panel.background = element_blank(), axis.line = element_line(colour = "black"),axis.ticks.length=unit(.25, "cm"))+labs(x="Patient",y=ylab)
+ 
+}
+
+
+```
+
+
+```{r, fig.height=6, fig.width=6}
+
+#importannt note:
+#These chip peak files were made from original peak files obtained from MACS2. Just select the chromosome coordinates from the files and create new files.
+
+pattern= "H3K27ac"
+
+files <- list.files(path = "makepeaks/", pattern = paste0("_",pattern,"_"), all.files = T,
+           full.names = FALSE, recursive = FALSE,
+           ignore.case = T)
+ patient <- substr(files, 1, 4)
+ Tissue <- substr(files, 6, 6)
+ 
+ df <- data.frame(patient, Tissue=as.character(Tissue), stringsAsFactors=FALSE)
+ df2 <- data.frame(patient, Tissue=as.character(Tissue), stringsAsFactors=FALSE)
+for(i in 1:length(files)){
+ 
+  
+  df[i,3] <- chi_overlap_barplot(files[i], mark=pattern)
+  df2[i,3] <- chi_overlap_barplot(files[i], mark=pattern, random_ref=T)
+}
+
+ df$Tissue[df$Tissue == "N"] <- "Normal"
+ df$Tissue[df$Tissue == "T"] <- "Tumor"
+ 
+  df2$Tissue[df2$Tissue == "N"] <- "Normal"
+ df2$Tissue[df2$Tissue == "T"] <- "Tumor"
+ 
+ chip_overlap_barplot_draw(df)
+ a <- df %>% subset(Tissue=="Normal")  
+   mean(a$V3)
+   df
+   
+   
+    chip_overlap_barplot_draw(df2, ylab=paste0("% Peak overklap with \nrandom regions"))
+ a <- df2 %>% subset(Tissue=="Normal")  
+   mean(a$V3)
+   df2
+   
+   pattern= "H3K4me3"
+
+files <- list.files(path = "makepeaks/", pattern = paste0("_",pattern,"_"), all.files = T,
+           full.names = FALSE, recursive = FALSE,
+           ignore.case = T)
+ patient <- substr(files, 1, 4)
+ Tissue <- substr(files, 6, 6)
+ 
+ df <- data.frame(patient, Tissue=as.character(Tissue), stringsAsFactors=FALSE)
+ df2 <- data.frame(patient, Tissue=as.character(Tissue), stringsAsFactors=FALSE)
+for(i in 1:length(files)){
+ 
+  
+  df[i,3] <- chi_overlap_barplot(files[i], mark=pattern)
+  df2[i,3] <- chi_overlap_barplot(files[i], mark=pattern, random_ref=T)
+}
+
+ df$Tissue[df$Tissue == "N"] <- "Normal"
+ df$Tissue[df$Tissue == "T"] <- "Tumor"
+ 
+  df2$Tissue[df2$Tissue == "N"] <- "Normal"
+ df2$Tissue[df2$Tissue == "T"] <- "Tumor"
+ 
+ chip_overlap_barplot_draw(df)
+ a <- df %>% subset(Tissue=="Normal")  
+   mean(a$V3)
+   df
+   
+   
+    chip_overlap_barplot_draw(df2, ylab=paste0("% Peak overklap with \nrandom regions"))
+ a <- df2 %>% subset(Tissue=="Normal")  
+   mean(a$V3)
+   df2
+   
+   pattern= "H3K4me1"
+
+files <- list.files(path = "makepeaks/", pattern = paste0("_",pattern,"_"), all.files = T,
+           full.names = FALSE, recursive = FALSE,
+           ignore.case = T)
+ patient <- substr(files, 1, 4)
+ Tissue <- substr(files, 6, 6)
+ 
+ df <- data.frame(patient, Tissue=as.character(Tissue), stringsAsFactors=FALSE)
+ df2 <- data.frame(patient, Tissue=as.character(Tissue), stringsAsFactors=FALSE)
+for(i in 1:length(files)){
+ 
+  
+  df[i,3] <- chi_overlap_barplot(files[i], mark=pattern)
+  df2[i,3] <- chi_overlap_barplot(files[i], mark=pattern, random_ref=T)
+}
+
+ df$Tissue[df$Tissue == "N"] <- "Normal"
+ df$Tissue[df$Tissue == "T"] <- "Tumor"
+ 
+  df2$Tissue[df2$Tissue == "N"] <- "Normal"
+ df2$Tissue[df2$Tissue == "T"] <- "Tumor"
+ 
+ chip_overlap_barplot_draw(df)
+ a <- df %>% subset(Tissue=="Normal")  
+   mean(a$V3)
+   df
+   
+   
+    chip_overlap_barplot_draw(df2, ylab=paste0("% Peak overklap with \nrandom regions"))
+ a <- df2 %>% subset(Tissue=="Normal")  
+   mean(a$V3)
+   df2
+```
+
+
+#Supplemenatry Figure S1B
+##Heatmap for aggregate regions of chip seq 5' region, gene body and 3' region
+
+Note: all the regions are normalized for same width
+i.e based on gene body.
+if gene body size is 50 Kb then other 2 regions are also 500bp each
+then all three regions seperately normalized to 8000 bp. then got the mean of 10 columns
+data frame for one region is composed of 800 columns
+when aggregated final data frame has 800* 3 columns
+then it has used to create the heatmap below
+to know how I created these files, refer H3K27ac_aggregate_heatmap.promo_gbody_3FR.pbs script
+
+
+###before running the script we need to create normalized bedgraph files. Use this code and create normalized bdg files for all the pileup files
+```{bash}
+
+#All the files are normalized by area under the curve
+#select only pileip files
+#e.g: R354_N_1_Kidney_ChIP_H3K27ac_treat_pileup.bdg
+auc=$(awk 'BEGIN {a=0;b=0 } ; { a=($3-$2)*$4;b=a+b; } END{print b}' ../chip_pileups/FILENAME_pileup.bdg)
+
+awk -v OFS="\t" -v auc="$auc" 'NF==4{print $1,$2,$3,$4*1000000/auc}' ../chip_pileups/FILENAME__pileup.bdg > FILENAME_norm_pileup.bdg
+
+
+```
+
+##Then run H3K27ac_aggregate_heatmap.promo_gbody_3FR.pbs
+#####Using the same code generate files for other samples and other histone marks
+####how ever you have to create the files using and modifying these scripts.
+####all files are not attached
+```{r}
+library(gplots)
+library(ggplot2)
+```
+
+After creating all the files run this
+
+
+```{r}
+heatmap.range <- 800
+  srange <- 1
+  colors = c(seq(0.0001,0.002,length=800))
+  my_palette <- colorRampPalette(c("white", "yellow", "red"))(n = 799)
+mat.final.promoter <- read.table(
+  "promoter.final.R354N.H3K27ac.txt",   sep="\t", header=FALSE)
+mat.final.genebody <- read.table(
+  "genebody.final.R354N.H3K27ac.txt",   sep="\t", header=FALSE)
+mat.final.threeprime <- read.table(
+  "threeprime.final.R354N.H3K27ac.txt",   sep="\t", header=FALSE)
+mat.final <- cbind(mat.final.promoter[,1:800],mat.final.genebody[,1:800],mat.final.threeprime[,1:800])
+
+gplots::heatmap.2(as.matrix(mat.final),Rowv=F,Colv=F,dendrogram = "none", trace="none", col=my_palette, 
+                  breaks=colors, labRow = F, ylab = "Gene", 
+                  labCol  = c(" ", rep(" ", ((heatmap.range)-srange)), "TSS",rep(" ", ((heatmap.range*2)-2)),
+                              " ") ,margins = c(4, 2), cexRow=0.8 ,
+                  xlab="Nucleotide position", 
+                  main = "R354N",
+                  symm=F,symkey=F,symbreaks=T,scale="none")
+
+###tumor
+mat.final.promoter <- read.table(
+  "promoter.final.R354T.H3K27ac.txt",   sep="\t", header=FALSE)
+mat.final.genebody <- read.table(
+  "genebody.final.R354T.H3K27ac.txt",   sep="\t", header=FALSE)
+mat.final.threeprime <- read.table(
+  "threeprime.final.R354T.H3K27ac.txt",   sep="\t", header=FALSE)
+mat.final <- cbind(mat.final.promoter[,1:800],mat.final.genebody[,1:800],mat.final.threeprime[,1:800])
+
+gplots::heatmap.2(as.matrix(mat.final),Rowv=F,Colv=F,dendrogram = "none", trace="none", col=my_palette, 
+                  breaks=colors, labRow = F, ylab = "Gene", 
+                  labCol  = c(" ", rep(" ", ((heatmap.range)-srange)), "TSS",rep(" ", ((heatmap.range*2)-2)),
+                              " ") ,margins = c(4, 2), cexRow=0.8 ,
+                  xlab="Nucleotide position", 
+                  main = "R354T",
+                  symm=F,symkey=F,symbreaks=T,scale="none")
+
+
+```
+
+##create gene expression bar plot with normalized base mean values 
+
+```{r}
+
+#gene list was obtained when creating the heatmap matrix it is gene order of the H3K27ac 354N sample
+
+chip.gene.list <- read.table(
+  "gene.list.txt",   sep="\t", header=FALSE)
+
+#this file was created from ordered.down.regulated.genes.csv (-> ordered.down.regulated.genes.csv is the output of DESEQ2 differential gene expression analysis
+#using 4 patients)
+#select the gene and base mean and rename the files as "basemean.gene.expression.csv"
+gene.expression.list <- read.csv(
+  "basemean.gene.expression.csv", header=TRUE)
+gene.expression.list <- gene.expression.list[,c(1,2)]
+
+#load basemean.gene.expression.csv
+gene.expression.level <- merge(chip.gene.list, gene.expression.list, by.x="V1", by.y="X")
+gene.expression.level <- data.frame(gene.expression.level[order(gene.expression.level$V2),])
+#remove rows with NA
+gene.expression.level <- gene.expression.level[complete.cases(gene.expression.level),]
+cols <- c("blue", "red")[(gene.expression.level$Normal > 0) + 1] 
+barplot(rev(log2(gene.expression.level$Normal+1)), col = rev(cols), horiz=TRUE, border = NA)
+barplot(rev(gene.expression.level$Normal), col = rev(cols), horiz=TRUE, border = NA)
+
+ggplot(gene.expression.level, aes(x=V1, y=Normal)) +
+  geom_bar(stat='identity') +
+  coord_flip()
+
+write.csv(gene.expression.level, file="gene.expression.level.and.chip.seq.enrichment.gene.order.csv")
+
+```
+
+
+##signal difference (T/N)
+
+Before run this you should generate files using H3K27ac.job.diff.norm.col.mean.pbs
+```{r}
+
+
+colors = c(seq(-0.3,0.3,length=800))
+heatmap.range = 800
+srange =1
+flanking.size=4000
+erange =(flanking.size*2)
+#blue neagitive red positive
+#blue down regulated red up regulated
+my_palette <- colorRampPalette(c("blue", "white", "red"))(n = 799)
+
+ordered.down.regulated.genes <- read.csv(
+  "ordered.down.regulated.genes.csv", header=TRUE)
+
+#R354
+mat.final <- read.table(
+  "finalmatrix.R354N.H3K27ac.diff.cn.txt",   sep="\t", header=FALSE)
+
+#filtered by lg2fc SE < 0.5
+#in order to do that select the filtered gene list when find the difference in HPC
+#mat.final <- read.table("finalmatrix354.filtered.txt",   sep="\t", header=FALSE)
+
+gplots::heatmap.2(as.matrix(mat.final),Rowv=F,Colv=F,dendrogram = "none", trace="none", col=my_palette, 
+                  breaks=colors, labRow = F, ylab = "Gene", 
+                  labCol  = c("-4000", rep(" ", ((heatmap.range/2)-srange)), "TSS", rep(" ", ((heatmap.range/2)-srange-1)),
+                              "+4000") ,margins = c(4, 2), cexRow=0.8 ,
+                  xlab="Nucleotide position",lmat = rbind(c(4,3),c(2,1)), lwid = c(1.5,3), lhei = c(1.5,5), 
+                  main = "R354",
+                  symm=F,symkey=F,symbreaks=T,scale="none")
+
+#making the heat map for log2foild change of gene expression
+
+
+R354.gene.order.Rmerge <- read.table(
+  "ordered.peak.R354N.H3K27ac.gene.order.Rmerge.txt",  sep="\t", header=TRUE)
+
+#select genes only in Rmerge
+#write the code
+
+merged.gene.list.lg2fldchnge <- merge(R354.gene.order.Rmerge, ordered.down.regulated.genes , by.x="gene", by.y="X")
+merged.ordered.gene.list.lg2fldchnge <- merged.gene.list.lg2fldchnge[order(merged.gene.list.lg2fldchnge$order),]
+#make a color column using the log2foldchange column vector
+cols <- c("blue", "red")[(merged.ordered.gene.list.lg2fldchnge$log2FoldChange > 0) + 1]  
+#draw the bar plot using color values
+barplot(rev(merged.ordered.gene.list.lg2fldchnge$log2FoldChange), col = rev(cols), horiz=TRUE, border = NA)
+View(data.frame(cols))
+
+```
+
+
+```{r}
+library(knitr)
+purl("supp_fig_1.Rmd")
+```
+

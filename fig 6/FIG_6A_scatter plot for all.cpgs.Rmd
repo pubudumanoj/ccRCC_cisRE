@@ -1,0 +1,139 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+```{r}
+DMPs <- read.csv(file="DMPs.merge.RCC4.csv")
+
+#create a probe region bed file for window analysis
+
+#if u used DMPs.merge.RCC4.csv remove comment here and run this
+dmp.sub <- data.frame(DMPs[,c(2,3)],(DMPs[,3]+1),DMPs[,c(1,29,4,27)])
+
+#if u used DMPs.merge.csv use this (after merging 2 cell lines). It has only overlapping cpgs
+#dmp.sub <- data.frame(DMPs[,c(5,6)],(DMPs[,6]+1),DMPs[,c(1,3,7,2)])
+
+ #chr       pos X.DMPs...3....1.       Name       logFC strand adj.P.Val
+#1 chr16  53468112         53468113 cg00000029  0.01288266      + 0.9507045
+#2  chr3  37459206         37459207 cg00000108 -0.09179907      + 0.5668767
+#3  chr3 171916037        171916038 cg00000109 -0.09466724      + 0.6298825
+#4  chr1  91194674         91194675 cg00000165 -0.05925757      - 0.7691791
+
+#chr,pos,pos,logfcbeta,padj,name,strand
+
+
+#write.table(dmp.sub, file="DMPs.for.window.analysis.bed", sep="\t", row.names=F, col.names=F, quote = F)
+##after getting overlapping cpgs
+write.table(dmp.sub, file="DMPs.for.window.analysis.new.RCC4.bed", sep="\t", row.names=F, col.names=F, quote = F)
+
+
+DMPs <- read.csv(file="DMPs.merge.786.21.csv")
+dmp.sub <- data.frame(DMPs[,c(2,3)],(DMPs[,3]+1),DMPs[,c(1,29,4,27)])
+write.table(dmp.sub, file="DMPs.for.window.analysis.new.c786.21.bed", sep="\t", row.names=F, col.names=F, quote = F)
+
+DMPs <- read.csv(file="DMPs.merge.patients.csv")
+dmp.sub <- data.frame(DMPs[,c(2,3)],(DMPs[,3]+1),DMPs[,c(1,29,4,27)])
+write.table(dmp.sub, file="DMPs.for.window.analysis.new.patients.bed", sep="\t", row.names=F, col.names=F, quote = F)
+```
+
+```{bash}
+sort -k1,1V -k2,2n DMPs.for.window.analysis.new.RCC4.bed > DMPs.for.window.analysis.sorted.new.RCC4.bed
+sort -k1,1V -k2,2n DMPs.for.window.analysis.new.c786.21.bed > DMPs.for.window.analysis.sorted.new.c786.21.bed
+sort -k1,1V -k2,2n DMPs.for.window.analysis.new.patients.bed > DMPs.for.window.analysis.sorted.new.patients.bed
+```
+
+```{r}
+library(dplyr)
+library(data.table)
+library(stringi)
+
+
+
+ 
+DMPs.common.RCC4 <- read.csv(file="DMPs.for.window.analysis.sorted.new.RCC4.bed", sep="\t", header = FALSE)
+DMPs.common.c786 <- read.csv(file="DMPs.for.window.analysis.sorted.new.c786.21.bed", sep="\t", header = FALSE)
+DMPs.common.patients <- read.csv(file="DMPs.for.window.analysis.sorted.new.patients.bed", sep="\t", header = FALSE)
+
+prepare.probes <- function(sample.name, sample, fdr=0.05, beta=0.2){
+#select columns
+DMPs <- sample[c(4,5,7)]
+colnames(DMPs) <- c("probe", paste(sample.name,".beta",sep=""),paste(sample.name,".fdr",sep=""))
+return(DMPs)
+}
+
+
+DMPs.common.RCC4.filt <- prepare.probes("RCC4", DMPs.common.RCC4)
+DMPs.common.c786.filt <- prepare.probes("c786", DMPs.common.c786)
+DMPs.common.patients.filt <- prepare.probes("patients", DMPs.common.patients)
+
+#merge each of theme
+
+merged.probes.from.samples <- merge(merge(DMPs.common.RCC4.filt, DMPs.common.c786.filt, by="probe"),DMPs.common.patients.filt, by="probe")
+
+```
+
+```{r}
+
+		smoothscattergradient <- function( x=NULL, y=NULL, file.name=NULL , xlabs=NULL, ylabs=NULL, width=7, height=5, lab.x=-0.5, lab.y=0.5, bin.size=100,bin.width1=0.1,bin.width2=0.1 , my.breaks=c(1,10, 100, 1000, 5000, 50000)){
+			#my.breaks=c(1,10, 100, 1000, 5000, 50000)
+			###create the df for smooth scatter
+			df <- data.frame(x = x, y = y)
+			
+			xx <- densCols(x,y, colramp=colorRampPalette(rev(rainbow(15, end = 4/6))))
+			df$Density <- col2rgb(xx)[1,] + 1L
+			
+			df <- data.frame(df)
+			
+			#Pearson correlation r and p value calculation
+p.cor <- cor.test(x, y , method = "pearson", conf.level = 0.95)
+#create the p value and r value lable for geom text
+			labels = data.frame(x = lab.x, y = lab.y, label = as.character(paste("r=",round(as.numeric(p.cor[4]),5)," P-value=",as.numeric(p.cor$p.value))))
+			my_breaks = my.breaks
+			#jpeg(file=file.name, height=height,width=width,units="in",res=500)
+			pdf(file=paste("graphs/",file.name, sep=""), height=height,width=width)
+			figure <- ggplot(df, aes(x=x, y=y))+stat_binhex(bins=bin.size)+
+			scale_fill_gradientn(name = "", trans = "log",
+                        breaks = my_breaks, labels = my_breaks, colours = rev(rainbow(15, end = 4/6)))+
+			geom_text(data = labels, aes(x = x, y = y,
+                        label = label), parse = F, size=6)+
+						labs(x=xlabs,y=ylabs)+
+						theme_bw()+
+						theme(plot.title = element_text(size=12, hjust = 0.5), text = element_text(size=20 ),
+						panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+						panel.background = element_blank(), axis.line = element_line(colour = "black"),
+        axis.text = element_text( size=18), axis.ticks.length=unit(.25, "cm"))
+		 
+		print(figure)
+			dev.off()
+			
+			}
+			
+		
+```
+
+#Figure 6A
+```{r}
+
+
+
+	
+	#RCC4 vs patiens all without selecting significant CpGs (all CpGss in both)
+	
+
+	merged.probes.from.samples.RCC4.and.patients <- merged.probes.from.samples
+
+		smoothscattergradient(x=merged.probes.from.samples.RCC4.and.patients$RCC4.beta, y=merged.probes.from.samples.RCC4.and.patients$patients.beta, file.name=paste("scatter plot for all.cpgs.rcc4-patients.fdr.1.beta",deltabeta_threshold,".pdf",sep=""), xlabs=paste("Methylation change (    )\nof VHL/MOCK-RCC4"), ylabs= paste("Methylation change (    )\nof Normal/Tumor"), lab.x=0, lab.y=0.75, bin.size=200, my.breaks=c(5,50, 500, 5000, 50000))
+			
+
+	
+	#786-O Vs patients	all without selecting significant CpGs (all CpGss in both)
+	
+	merged.probes.from.samples.786.and.patients <- merged.probes.from.samples
+
+	
+	smoothscattergradient(x=merged.probes.from.samples.786.and.patients$c786.beta, y=merged.probes.from.samples.786.and.patients$patients.beta, file.name=paste("scatter plot for all.cpgs.c786-patients.fdr.1.beta",deltabeta_threshold,".pdf",sep=""), xlabs="Methylation change (    )\nof VHL/MOCK-786-O", ylabs="Methylation change (    )\nof Normal/Tumor", lab.x=0, lab.y=0.75, bin.size=200, my.breaks=c(5,50, 500, 5000, 50000))
+	
+```
+

@@ -1,0 +1,499 @@
+---
+title: "R Notebook"
+output: html_notebook
+author: "Pubudu Nawarathna"
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+
+Create the structure of the data frame by adding information and other meta data
+```{r}
+
+condition="hypoxia_genes"
+
+condition
+```
+
+```{r}
+
+if (condition == "hypoxia_genes") {
+  sampleTable_RNA <- data.frame(
+    row.names = NULL,
+    sample_name = c(
+      "EV_H1",
+      "EV_H2",
+      "VHL_H1",
+      "VHL_H2",
+      "EV_N1",
+      "EV_N2",
+      "VHL_N1",
+      "VHL_N2"
+    ),
+    #sample_name=c("RCC4_EV_Hypoxia-1","RCC4_EV_Hypoxia-3","RCC4_VHL_Hypoxia-1","RCC4_VHL_Hypoxia-3","RCC4_EV_Normal-1","RCC4_EV_Normal-3","RCC4_VHL_Normal-1","RCC4_VHL_Normal-3"),
+    
+    file_name = c(
+      "RCC4_EV_Hypoxia_1.dedup_count_intersection_strict.revstrand.txt",
+      "RCC4_EV_Hypoxia_3.dedup_count_intersection_strict.revstrand.txt",
+      "RCC4_VHL_Hypoxia_1.dedup_count_intersection_strict.revstrand.txt",
+      "RCC4_VHL_Hypoxia_3.dedup_count_intersection_strict.revstrand.txt",
+      "RCC4_EV_Normal_1.dedup_count_intersection_strict.revstrand.txt",
+      "RCC4_EV_Normal_3.dedup_count_intersection_strict.revstrand.txt",
+      "RCC4_VHL_Normal_1.dedup_count_intersection_strict.revstrand.txt",
+      "RCC4_VHL_Normal_3.dedup_count_intersection_strict.revstrand.txt"
+    ),
+    vhlcond = as.numeric(c(0,0,1,1,0,0,1,1)),
+    o2cond = as.numeric(c(0,0,0,0,1,1,1,1)),
+    batch = factor(rep(paste0("b", 1:2), 4)),
+    interaction = as.numeric(c(0,0,0,0,0,0,1,1))
+  )
+  
+}
+#sampleTable_eRNA
+sampleTable_RNA
+#sampleTable_ERE
+
+
+#
+```
+
+```{r}
+#load the DEseq2 library
+library("DESeq2")
+library(dplyr)
+library(ggplot2)
+library(cowplot)
+library(zoo)
+library(stringi)
+library(stringr)
+library(data.table)
+```
+
+genes
+```{r}
+##new method
+ddsHTSeq_RNA <- DESeqDataSetFromHTSeqCount(sampleTable = sampleTable_RNA,
+                                           directory = directory,
+                                           design= ~batch+o2cond+interaction+vhlcond)
+
+ddsHTSeq_RNA
+```
+
+
+Pre-filtering rows with very low counts (i.r 0 counts)
+```{r}
+ddsHTSeq_filtered_RNA<- ddsHTSeq_RNA[ rowSums(counts(ddsHTSeq_RNA)) > 10, ]
+ddsHTSeq_filtered_RNA
+```
+
+
+
+```{r}
+#ddsHTSeq_filtered_RNA$group <- factor(paste0(ddsHTSeq_filtered_RNA$vhlcond,ddsHTSeq_filtered_RNA$o2cond))
+#ddsHTSeq_filtered_RNA$group
+```
+
+
+##Dif Analysis
+```{r}
+#design(ddsHTSeq_filtered_RNA) <- ~ batch + group
+#using this function it automatically combine HTSeq output and prepare the input to the DESeq analysis
+ddsMF_RNA <- DESeq(ddsHTSeq_filtered_RNA)
+ resultsNames(ddsMF_RNA)
+ 
+ 
+ #"Intercept"         "batch_b2_vs_b1"    "group_EVN_vs_EVH"  "group_VHLH_vs_EVH" "group_VHLN_vs_EVH"
+ #resMF_VHLEV_H <- results(ddsMF_RNA, contrast=c("group", "VHLH", "EVH"),alpha=0.05)
+ 
+# resMF_VHLEV_H
+```
+
+
+
+```{r}
+resMF_VHLEV_H[order(resMF_VHLEV_H$padj),] %>% as.data.frame %>% filter(padj <0.05) %>% dim()
+```
+```{r}
+colData(ddsMF_RNA)
+```
+
+```{r}
+ #resMF_NH_EV <- results(ddsMF_RNA, contrast=c("group", "EVH", "EVN"),alpha=0.05)
+#mcols(resMF_NH_EV)
+```
+
+####New design
+
+
+IHW for filtering
+```{r}
+#source("https://bioconductor.org/biocLite.R")
+#biocLite("IHW")
+library("IHW")
+resIHW_VHLEV_H <- results(ddsMF_RNA, name=c("vhlcond"),alpha=0.05, filterFun=ihw)
+resIHW_VHLEV_N <- results(ddsMF_RNA, list(c("vhlcond","interaction")),alpha=0.05 , filterFun=ihw)
+
+```
+
+
+
+```{r}
+#design(ddsHTSeq_filtered_RNA) <-  ~batch+o2cond+vhlcond+o2cond:vhlcond
+#ddsMF_RNA_ori <- DESeq(ddsHTSeq_filtered_RNA)
+ #resultsNames(ddsMF_RNA)
+ #"Intercept"          "batch_b2_vs_b1"     "o2cond_N_vs_H"      "vhlcond_VHL_vs_EV"  "o2condN.vhlcondVHL"
+#resMF_VHLEV_H <- results(ddsMF_RNA, contrast=c("vhlcond", "VHL", "EV"),alpha=0.05)
+resMF_VHLEV_H <- results(ddsMF_RNA, name=c("vhlcond"),alpha=0.05)
+
+#resMF_VHLEV_H %>% subset( padj <0.05)
+# log2 fold change (MLE): vhlcond VHL vs EV 
+# Wald test p-value: vhlcond VHL vs EV 
+# DataFrame with 1352 rows and 6 columns
+#                      baseMean log2FoldChange      lfcSE      stat       pvalue         padj
+#                     <numeric>      <numeric>  <numeric> <numeric>    <numeric>    <numeric>
+# ENSG00000000460.16   825.4608     -0.4807622 0.12138948 -3.960493 7.479517e-05 1.729872e-03
+# ENSG00000000971.15  5869.1933      1.0705740 0.07872471 13.598958 4.061799e-42 4.906653e-39
+# ENSG00000001461.16  1448.3960     -0.3151217 0.10254617 -3.072974 2.119369e-03 2.842235e-02
+# ENSG00000002587.9    155.0148      0.7597574 0.25173185  3.018122 2.543467e-03 3.290165e-02
+# ENSG00000003096.14   577.4153      1.6661010 0.16272891 10.238507 1.332771e-24 6.342376e-22
+# ...                       ...            ...        ...       ...          ...          ...
+# ENSG00000278828.1  1935.23222     -0.5871588  0.1314054 -4.468300 7.884360e-06 0.0002394894
+# ENSG00000279633.1   262.82991      0.7893771  0.2004305  3.938409 8.202370e-05 0.0018831875
+# ENSG00000280239.1    83.75858     -1.0754970  0.3316478 -3.242889 1.183242e-03 0.0179359385
+# ENSG00000282988.1   557.83426     -0.6111910  0.1531271 -3.991397 6.568527e-05 0.0015605469
+# ENSG00000284681.2    58.36760     -1.4269276  0.3941258 -3.620487 2.940487e-04 0.0055837245
+
+
+```
+
+
+```{r}
+#resMF_VHLEV_N <- results(ddsMF_RNA, list(c("vhlcond_VHL_vs_EV","o2condN.vhlcondVHL")),alpha=0.05)
+
+resMF_VHLEV_N <- results(ddsMF_RNA, list(c("vhlcond","interaction")),alpha=0.05)
+resMF_VHLEV_N %>% subset( padj <0.05)
+
+# log2 fold change (MLE): vhlcond+interaction effect 
+# Wald test p-value: vhlcond+interaction effect 
+# DataFrame with 1905 rows and 6 columns
+#                       baseMean log2FoldChange      lfcSE      stat       pvalue         padj
+#                      <numeric>      <numeric>  <numeric> <numeric>    <numeric>    <numeric>
+# ENSG00000000971.15  5869.19331      1.1157315 0.07608630 14.664025 1.095794e-48 5.185610e-46
+# ENSG00000001461.16  1448.39595     -0.5074452 0.10459540 -4.851506 1.225275e-06 3.226427e-05
+# ENSG00000003096.14   577.41534      1.7158740 0.15337159 11.187691 4.684722e-29 9.237267e-27
+# ENSG00000003137.8     45.57507     -1.5108967 0.54006133 -2.797639 5.147758e-03 4.597888e-02
+# ENSG00000003402.19 11081.60926     -0.3422124 0.08899876 -3.845136 1.204856e-04 1.863308e-03
+# ...                        ...            ...        ...       ...          ...          ...
+# ENSG00000282988.1    557.83426     -0.6264653  0.1489291 -4.206467 2.593942e-05 4.821937e-04
+# ENSG00000283406.1     28.25926     -3.1843917  0.8906519 -3.575349 3.497604e-04 4.795598e-03
+# ENSG00000284138.1     85.75514     -2.3632531  0.4492010 -5.261015 1.432626e-07 4.607493e-06
+# ENSG00000285155.1    284.67884      0.5748576  0.1863011  3.085637 2.031164e-03 2.151034e-02
+# ENSG00000285417.1    361.10435      0.7228357  0.1743680  4.145461 3.391307e-05 6.079028e-04
+```
+
+
+
+```{r}
+library(dplyr)
+ #"Intercept"          "batch_b2_vs_b1"     "o2cond_N_vs_H"      "vhlcond_VHL_vs_EV"  "o2condN.vhlcondVHL"
+#resMF_NH_EV <-  results(ddsMF_RNA, contrast=c("o2cond", "N", "H"),alpha=0.05)
+resMF_NH_EV <-  results(ddsMF_RNA, name=c("o2cond"),alpha=0.05)
+resMF_NH_EV %>% as.data.frame() %>% subset(padj < 0.05)
+
+
+# ENSG00000000971.15	5869.19331	1.1616249	0.07837100	14.822127	1.053928e-49	5.631038e-47
+# ENSG00000001036.13	6625.36906	-0.3053391	0.08089148	-3.774676	1.602159e-04	1.275797e-03
+# ENSG00000001084.11	1671.86853	0.3247380	0.09548844	3.400810	6.718660e-04	4.265280e-03
+# ENSG00000001461.16	1448.39595	-0.4108195	0.10209223	-4.024004	5.721699e-05	5.227165e-04
+# ENSG00000001617.11	1741.27229	-1.0454962	0.09603641	-10.886456	1.337434e-27	2.839990e-25
+# ENSG00000001630.15	810.09124	0.4007533	0.13777353	2.908783	3.628383e-03	1.728413e-02
+# ENSG00000001631.15	2400.27363	-0.2273158	0.09169286	-2.479101	1.317142e-02	4.840429e-02
+# ENSG00000003056.7	5907.49367	0.4907583	0.07747992	6.334006	2.388760e-10	7.409182e-09
+# ENSG00000003096.14	577.41534	0.7144345	0.16594522	4.305243	1.668026e-05	1.793994e-04
+# ENSG00000003147.17	234.47811	-0.6633082	0.20593764	-3.220918	1.277808e-03	7.275103e-03
+```
+
+
+interaction coeeficient
+```{r}
+
+#resMF_interaction <-  results(ddsMF_RNA, name=c("o2condN.vhlcondVHL"),alpha=0.05)
+resMF_interaction <-  results(ddsMF_RNA, name=c("interaction"),alpha=0.05)
+resMF_interaction %>% as.data.frame() %>% subset(padj < 0.05)
+# 
+# ENSG00000005187.11	2292.96951	0.4967560	0.13029194	3.812638	1.374916e-04	1.921623e-02
+# ENSG00000019582.14	5533.12645	0.5268128	0.11238308	4.687652	2.763573e-06	5.946946e-04
+# ENSG00000026508.18	15591.14445	-0.4284983	0.09430434	-4.543782	5.525387e-06	1.100395e-03
+# ENSG00000046889.18	11853.29195	-0.6716357	0.11674341	-5.753093	8.762535e-09	3.126150e-06
+# ENSG00000047457.13	14075.48234	-0.6367443	0.10753309	-5.921380	3.192511e-09	1.272967e-06
+# ENSG00000074410.13	2754.84663	-0.8536749	0.12142771	-7.030314	2.060696e-12	1.862457e-09
+# ENSG00000076716.8	6791.63514	-0.6152998	0.10720730	-5.739346	9.504266e-09	3.221233e-06
+# ENSG00000079263.18	1198.00884	0.7685289	0.15094131	5.091575	3.551021e-07	9.083243e-05
+# ENSG00000080493.15	7869.04252	0.3550784	0.09593731	3.701150	2.146248e-04	2.797758e-02
+# ENSG00000082684.14	3889.16506	-1.6492150	0.15222580	-10.834004	2.375352e-27	1.831960e-23
+```
+
+
+```{r}
+
+library(ggfortify)
+library(cowplot)
+library(dplyr)
+library(data.table)
+```
+
+```{r}
+
+#normalized count value without logged transformation
+#ddsHTSeq_RNA
+#ddsMF_RNA
+cds <- estimateSizeFactors(ddsHTSeq_filtered_RNA)
+cds
+```
+
+
+```{r}
+  count.pca <- log1p(counts(cds, normalized = T))
+  #count.pca <- count.pca[is.finite(rowSums(count.pca)),]
+  head(count.pca)
+```
+
+
+```{r}
+
+count.pca <- count.pca-rowMeans(count.pca)
+head(count.pca)
+```
+
+
+
+```{r}
+df <- t(count.pca)
+#dff <- data.frame(group=c("EV","EV","VHL","VHL"))
+dff <- data.frame(group=c("H_EV","H_EV","H_VHL","H_VHL","N_EV","N_EV","N_VHL","N_VHL"))
+df<- data.frame(df,dff)
+df[,dim(df)[2]]
+```
+
+```{r}
+        pca  <- prcomp(t(count.pca), retx = TRUE, center = F, scale. = T)
+
+```
+
+```{r}
+
+#pca  <- prcomp(t(assay(rld)), retx = TRUE, center = TRUE, scale. = T)
+#nt <- normTransform(ddsMF_RNA)
+
+#a <- pca$x
+#head(print(a))
+
+
+autoplot(pca, data=df, colour = 'group',size = 4, label=T, label.vjust = 1.4, label.angle=10)+
+  theme_bw()+
+  theme(text = element_text(size=18), axis.text=element_text(size=16),
+        axis.title=element_text(size=14,face="bold"))
+
+# autoplot(pca, label=T,size = 4)+
+#   theme_bw()+
+#   theme(text = element_text(size=18), axis.text=element_text(size=16),
+#         axis.title=element_text(size=14,face="bold"))
+# autoplot(pca)
+
+```
+
+
+###correct batch effect using sva combat
+```{r}
+library(sva)
+
+```
+
+
+```{r}
+batch_corrected_counts <- function(dframe=NULL){
+  
+  batch_corrected_expression <- ComBat(dat=dframe, batch = rep(paste0("b",1:2),4), par.prior = T, prior.plots = F)
+  
+  batch_corrected_expression <- apply(batch_corrected_expression, 2, function(x) {ifelse(x < 0, NA, x)}) %>% as.data.frame() %>% na.omit
+  pca.batch_corrected_expression <-batch_corrected_expression
+ # pca.batch_corrected_expression <- log1p(batch_corrected_expression)
+pca.batch_corrected_expression <- pca.batch_corrected_expression-rowMeans(pca.batch_corrected_expression) 
+return(pca.batch_corrected_expression)
+
+}
+batch_corrected_pca  <- function(dframe=NULL){
+pca.batch_corrected_expression =dframe
+df <- t(pca.batch_corrected_expression)
+dff <- data.frame(group=c("H_EV","H_EV","H_VHL","H_VHL","N_EV","N_EV","N_VHL","N_VHL"))
+df<- data.frame(df,dff)
+
+pca.batch_corrected_expression  <- prcomp(t(pca.batch_corrected_expression), retx = TRUE, center = F, scale. = T)
+
+autoplot(pca.batch_corrected_expression, data=df, colour = 'group',size = 4, label=T, label.vjust = 1.4, label.angle=10)+
+  theme_bw()+
+  theme(text = element_text(size=18), axis.text=element_text(size=16),
+        axis.title=element_text(size=14,face="bold"))
+  
+  
+}
+
+normlized.counts <-counts(cds, normalized=T)
+
+```
+
+
+
+**batch corrected pca using normalized row read counts**
+```{r}
+
+batch_corrected_pca(batch_corrected_counts(dframe=normlized.counts))
+```
+
+**batch corrected pca using rlog read counts**
+
+```{r}
+batch_rlog <- assay(rlog(ddsHTSeq_filtered_RNA))
+
+batch_corrected_pca(batch_corrected_counts(dframe=batch_rlog))
+```
+
+##pair plots using batch corrected values
+```{r}
+rccc4_dt <- ComBat(dat=normlized.counts, batch = rep(paste0("b",1:2),4), par.prior = T, prior.plots = F) 
+rccc4_dt <-apply(rccc4_dt, 2, function(x) {ifelse(x < 0, NA, x)}) %>% as.data.frame() %>% na.omit
+rccc4_dt <- rccc4_dt %>% 
+  as_data_frame() %>% 
+  mutate(gene =row.names(rccc4_dt))
+rccc4_dt_filtered <- rccc4_dt %>% 
+  filter_at(vars(matches("EV|VH")), all_vars(. < 20000 )) 
+rccc4_dt
+
+```
+
+
+
+## histograms using batch corrected counts
+
+```{r}
+
+library("RColorBrewer")
+library("pheatmap")
+library(gplots)
+```
+
+
+```{r}
+#Extracting transformed values
+#using rlog values
+batch_cor_counts <- batch_corrected_counts(dframe=batch_rlog)
+
+
+#Heatmap of the sample-to-sample distances
+sampleDists <- dist(t(batch_cor_counts))
+
+sampleDistMatrix <- as.matrix(sampleDists)
+#rownames(sampleDistMatrix) <- paste(rld$condition, rld$type, sep="")
+#colnames(sampleDistMatrix) <- paste(rld$condition, rld$type, sep="")
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+
+
+```
+
+```{r}
+
+colours = colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+heatmap.2( sampleDistMatrix, trace="none", col=colours)
+
+```
+```{r}
+
+#Principal component plot of the samples (old)
+rld <- rlog(ddsHTSeq_filtered_RNA)
+plotPCA(rld, intgroup=c("group"))
+```
+
+##heatmap with pearson correlation coefficient
+```{r}
+
+topVarGenes <- head( order( rowVars( count.pca ), decreasing=TRUE ), 1000 )
+
+batch.cor.count.for.hmap <- count.pca[topVarGenes,]
+ cor.reads <- cor(batch.cor.count.for.hmap, use="complete.obs", method="pearson")
+my_palette <- colorRampPalette(c("red", "white", "blue"))(n = 1000)
+ heatmap.2( as.matrix(cor.reads), col = my_palette)
+
+
+```
+
+
+##heatmap with pearson correlation coefficient -batch corrected
+```{r}
+topVarGenes <- head( order( rowVars( batch_cor_counts ), decreasing=TRUE ), 1000 )
+
+batch.cor.count.for.hmap <- batch_cor_counts[topVarGenes,]
+ cor.reads <- cor(batch.cor.count.for.hmap, use="complete.obs", method="pearson")
+my_palette <- colorRampPalette(c("red", "white", "blue"))(n = 1000)
+ heatmap.2( as.matrix(cor.reads), col = my_palette)
+```
+
+```{r}
+
+# hr <- hclust(as.dist(1-cor(t(count.pca), method="pearson")), method="complete")
+ hr <- hclust(as.dist(abs(cor(t((batch.cor.count.for.hmap-1)/2), method="pearson"))), method="complete")
+
+ #hc <- hclust(as.dist(1-cor(count.pca, method="spearman")), method="complete")
+
+ hc <- hclust(as.dist(abs(cor((batch.cor.count.for.hmap-1)/2, method="pearson"))), method="complete")
+
+ library(gplots)
+ heatmap.2(batch.cor.count.for.hmap, Rowv=as.dendrogram(hr), Colv=as.dendrogram(hc),  scale="row",
+           density.info="none", trace="none", labrow=NULL, dendrogram='col',labRow = FALSE)
+
+```
+
+We can order our results table by the smallest adjusted p value (padj) or p value (pvalue)
+```{r}
+
+resOrdered_VHLEV_H <- resMF_VHLEV_H[order(resMF_VHLEV_H$padj),]
+head(resOrdered_VHLEV_H, n=10)
+
+```
+
+
+```{r}
+resOrdered_VHLEV_N <- resMF_VHLEV_N[order(resMF_VHLEV_N$padj),]
+head(resOrdered_VHLEV_N, n=10)
+
+```
+
+
+##save files
+```{r}
+save_expression <- function(dframe=NULL, condition="hypoxia", ref="EV"){
+  
+  rnaseq <- dframe %>% as.data.frame()
+rnaseq <- setDT(rnaseq, keep.rownames = TRUE)[]
+gene.names <- fread("gene_reference.txt", header = F)
+rnaseq<- merge(rnaseq, gene.names, by.x="rn", by.y="V1")
+rnaseq <- rnaseq[order(rnaseq$padj),]
+rnaseq <- subset(rnaseq, padj < 0.05)
+
+write.table( rnaseq[ order( rnaseq$log2FoldChange, -rnaseq$baseMean ), ], file=paste0("RNA.seq.",condition,".VHLandwildtype.control.is.",ref,".csv" ),quote = F, row.names = F, col.names = T, sep = ",")
+return(rnaseq)
+}
+
+hypoxia_EV_gene_list <- save_expression(dframe=resOrdered_VHLEV_H, condition="hypoxia", ref="EV")
+Normoxia_EV_gene_list <- save_expression(dframe=resOrdered_VHLEV_N, condition="normoxia", ref="EV")
+
+interaction_gene_list <-save_expression(dframe=resMF_interaction)
+
+ #save_expression(dframe=resMF_VHLEV_H_ori, condition="hypoxia_hmodel", ref="EV")
+#save_expression(dframe=resMF_NH_EV, condition="EVNvEVH", ref="EVN")
+
+```

@@ -1,0 +1,723 @@
+---
+title: "Define Enhancers step 1"
+author: "Pubudu Nawarathna"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+####Define Enhancers
+```{bash}
+#module load gcc/5.4.0 bedtools/2.26.0
+	
+	
+	#module load gcc/5.4.0 r/3.4.3
+	cd ../../files
+	
+	###################
+	###################
+	##TUMOR
+	
+	#peaks files are stored in makepeaks
+	#they are the outputs of MACS2 peak calling program
+#	These chip peak files were made from original peak files obtained from MACS2. Just select the chromosome coordinates from the #files and create new files.
+	
+	#merge all the peaks
+	sort -k1,1 -k2,2n makepeaks/R400_T_1_Kidney_ChIP_H3K27ac_peaks.txt | bedtools merge -i stdin > R400_T_1_Kidney_ChIP_H3K27ac.bed
+	sort -k1,1 -k2,2n makepeaks/R380_T_1_Kidney_ChIP_H3K27ac_peaks.txt | bedtools merge -i stdin > R380_T_1_Kidney_ChIP_H3K27ac.bed
+	sort -k1,1 -k2,2n makepeaks/R371_T_1_Kidney_ChIP_H3K27ac_peaks.txt | bedtools merge -i stdin > R371_T_1_Kidney_ChIP_H3K27ac.bed
+	sort -k1,1 -k2,2n makepeaks/R354_T_1_Kidney_ChIP_H3K27ac_peaks.txt | bedtools merge -i stdin > R354_T_1_Kidney_ChIP_H3K27ac.bed
+	
+	sort -k1,1 -k2,2n makepeaks/R400_T_1_Kidney_ChIP_H3K4me1_peaks.txt | bedtools merge -i stdin > R400_T_1_Kidney_ChIP_H3K4me1.bed
+	sort -k1,1 -k2,2n makepeaks/R380_T_1_Kidney_ChIP_H3K4me1_peaks.txt | bedtools merge -i stdin > R380_T_1_Kidney_ChIP_H3K4me1.bed
+	sort -k1,1 -k2,2n makepeaks/R371_T_1_Kidney_ChIP_H3K4me1_peaks.txt | bedtools merge -i stdin > R371_T_1_Kidney_ChIP_H3K4me1.bed
+	sort -k1,1 -k2,2n makepeaks/R354_T_1_Kidney_ChIP_H3K4me1_peaks.txt | bedtools merge -i stdin > R354_T_1_Kidney_ChIP_H3K4me1.bed
+	
+	###overlap with each H3K27ac and H3K9me1 by sample
+	
+	bedtools intersect -a R400_T_1_Kidney_ChIP_H3K27ac.bed -b R400_T_1_Kidney_ChIP_H3K4me1.bed > R400_T_common_H3K27ac_and_H3K4me1_grc38.bed
+	bedtools intersect -a R380_T_1_Kidney_ChIP_H3K27ac.bed -b R380_T_1_Kidney_ChIP_H3K4me1.bed > R380_T_common_H3K27ac_and_H3K4me1_grc38.bed
+	bedtools intersect -a R371_T_1_Kidney_ChIP_H3K27ac.bed -b R371_T_1_Kidney_ChIP_H3K4me1.bed > R371_T_common_H3K27ac_and_H3K4me1_grc38.bed
+	bedtools intersect -a R354_T_1_Kidney_ChIP_H3K27ac.bed -b R354_T_1_Kidney_ChIP_H3K4me1.bed > R354_T_common_H3K27ac_and_H3K4me1_grc38.bed
+	
+	###pool all identified enhancer regions and create main file with all peaks and ids
+	#create the main file with all merged peaks in 4 samples and 
+	cat R400_T_common_H3K27ac_and_H3K4me1_grc38.bed R371_T_common_H3K27ac_and_H3K4me1_grc38.bed R354_T_common_H3K27ac_and_H3K4me1_grc38.bed | awk -v OFS="\t" '{print $1,$2,$3}' | sort -k1,1V -k2,2n | bedtools merge -i stdin | awk -v OFS="\t" '{print $1,$2,$3,"peak_T_"NR}' > merge_T_H3K27ac_and_H3K4me1_all_samples_with_id.bed
+	
+	######create the binary table for venn diagram (not in manuscript)
+	bedtools intersect -a merge_T_H3K27ac_and_H3K4me1_all_samples_with_id.bed -b R400_T_common_H3K27ac_and_H3K4me1_grc38.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R400_T_enhancer.binary_peaks.bed
+	bedtools intersect -a merge_T_H3K27ac_and_H3K4me1_all_samples_with_id.bed -b R380_T_common_H3K27ac_and_H3K4me1_grc38.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R380_T_enhancer.binary_peaks.bed
+	bedtools intersect -a merge_T_H3K27ac_and_H3K4me1_all_samples_with_id.bed -b R371_T_common_H3K27ac_and_H3K4me1_grc38.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R371_T_enhancer.binary_peaks.bed
+	bedtools intersect -a merge_T_H3K27ac_and_H3K4me1_all_samples_with_id.bed -b R354_T_common_H3K27ac_and_H3K4me1_grc38.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R354_T_enhancer.binary_peaks.bed
+	
+		#module load gcc/5.4.0 r-bundle-bioconductor/3.4
+```
+
+
+
+```{r}
+
+setwd("../../files")
+
+	library(data.table)
+	library(dplyr)
+	library(limma)
+	
+	r354 <- fread("R354_T_enhancer.binary_peaks.bed") %>% unique
+	colnames(r354) <- c("peak","R354T")
+	r371 <- fread("R371_T_enhancer.binary_peaks.bed") %>% unique
+	colnames(r371) <- c("peak","R371T")
+	#r380 <- fread("R380_T_enhancer.binary_peaks.bed") %>% unique
+	#colnames(r380) <- c("peak","R380T")
+	r400 <- fread("R400_T_enhancer.binary_peaks.bed") %>% unique
+	colnames(r400) <- c("peak","R400T")
+	
+	
+	merge.venn <- merge(merge(r354,r371),r400) %>% select("R354T","R371T","R400T") %>% vennCounts 
+	#pdf(file=paste("graphs/venn_h3k9me3_peaks.pdf",sep=""), height=8,width=8)
+	pdf(file=paste("graphs/venn_T_enhancer_peaks.pdf",sep=""), height=8,width=8)
+	vennDiagram(merge.venn)
+	dev.off()
+	
+	#select common peaks available in all files and create the final file
+	
+	all_merge <- fread("merge_T_H3K27ac_and_H3K4me1_all_samples_with_id.bed")
+	merge_binary_peaks <- merge(merge(r354,r371),r400) 
+	
+	merge_binary_peaks$rowsum <- rowSums(merge_binary_peaks[,2:4])
+	
+	merge_binary_peaks_filt <- subset(merge_binary_peaks, rowsum == 3)
+	
+	common_peaks_in_all_files <- merge(all_merge, merge_binary_peaks_filt, by.x="V4", by.y="peak") %>% select(c("V1","V2","V3","V4"))
+	
+	write.table(common_peaks_in_all_files, file="common_T_enhancer_peaks_in_all_patients.bed", quote=F, col.names=F, row.names=F, sep="\t")
+	
+	
+```
+
+
+```{bash}
+	#######################
+	#######################
+	#####NORMAL
+	
+	
+	sort -k1,1 -k2,2n ../callpeaks/R400_N_1_Kidney_ChIP_H3K27ac_peaks.txt | bedtools merge -i stdin > R400_N_1_Kidney_ChIP_H3K27ac.bed
+	sort -k1,1 -k2,2n ../callpeaks/R380_N_1_Kidney_ChIP_H3K27ac_peaks.txt | bedtools merge -i stdin > R380_N_1_Kidney_ChIP_H3K27ac.bed
+	sort -k1,1 -k2,2n ../callpeaks/R371_N_1_Kidney_ChIP_H3K27ac_peaks.txt | bedtools merge -i stdin > R371_N_1_Kidney_ChIP_H3K27ac.bed
+	sort -k1,1 -k2,2n ../callpeaks/R354_N_1_Kidney_ChIP_H3K27ac_peaks.txt | bedtools merge -i stdin > R354_N_1_Kidney_ChIP_H3K27ac.bed
+	
+	sort -k1,1 -k2,2n ../callpeaks/R400_N_1_Kidney_ChIP_H3K4me1_peaks.txt | bedtools merge -i stdin > R400_N_1_Kidney_ChIP_H3K4me1.bed
+	sort -k1,1 -k2,2n ../callpeaks/R380_N_1_Kidney_ChIP_H3K4me1_peaks.txt | bedtools merge -i stdin > R380_N_1_Kidney_ChIP_H3K4me1.bed
+	sort -k1,1 -k2,2n ../callpeaks/R371_N_1_Kidney_ChIP_H3K4me1_peaks.txt | bedtools merge -i stdin > R371_N_1_Kidney_ChIP_H3K4me1.bed
+	sort -k1,1 -k2,2n ../callpeaks/R354_N_1_Kidney_ChIP_H3K4me1_peaks.txt | bedtools merge -i stdin > R354_N_1_Kidney_ChIP_H3K4me1.bed
+	
+	###overlap with each H3K27ac and H3K4me1 by sample
+	
+	bedtools intersect -a R400_N_1_Kidney_ChIP_H3K27ac.bed -b R400_N_1_Kidney_ChIP_H3K4me1.bed > R400_N_common_H3K27ac_and_H3K4me1_grc38.bed
+	bedtools intersect -a R380_N_1_Kidney_ChIP_H3K27ac.bed -b R380_N_1_Kidney_ChIP_H3K4me1.bed > R380_N_common_H3K27ac_and_H3K4me1_grc38.bed
+	bedtools intersect -a R371_N_1_Kidney_ChIP_H3K27ac.bed -b R371_N_1_Kidney_ChIP_H3K4me1.bed > R371_N_common_H3K27ac_and_H3K4me1_grc38.bed
+	bedtools intersect -a R354_N_1_Kidney_ChIP_H3K27ac.bed -b R354_N_1_Kidney_ChIP_H3K4me1.bed > R354_N_common_H3K27ac_and_H3K4me1_grc38.bed
+	
+	###pool all identified enhancer regions and create main file with all peaks and ids
+	#create the main file with all merged peaks in 4 samples and 
+	cat R400_N_common_H3K27ac_and_H3K4me1_grc38.bed R380_N_common_H3K27ac_and_H3K4me1_grc38.bed R371_N_common_H3K27ac_and_H3K4me1_grc38.bed R354_N_common_H3K27ac_and_H3K4me1_grc38.bed | awk -v OFS="\t" '{print $1,$2,$3}' | sort -k1,1V -k2,2n | bedtools merge -i stdin | awk -v OFS="\t" '{print $1,$2,$3,"peak_N_"NR}' > merge_N_H3K27ac_and_H3K4me1_all_samples_with_id.bed
+	
+	######create the binary table for venn diagram
+	bedtools intersect -a merge_N_H3K27ac_and_H3K4me1_all_samples_with_id.bed -b R400_N_common_H3K27ac_and_H3K4me1_grc38.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R400_N_enhancer.binary_peaks.bed
+	bedtools intersect -a merge_N_H3K27ac_and_H3K4me1_all_samples_with_id.bed -b R380_N_common_H3K27ac_and_H3K4me1_grc38.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R380_N_enhancer.binary_peaks.bed
+	bedtools intersect -a merge_N_H3K27ac_and_H3K4me1_all_samples_with_id.bed -b R371_N_common_H3K27ac_and_H3K4me1_grc38.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R371_N_enhancer.binary_peaks.bed
+	bedtools intersect -a merge_N_H3K27ac_and_H3K4me1_all_samples_with_id.bed -b R354_N_common_H3K27ac_and_H3K4me1_grc38.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R354_N_enhancer.binary_peaks.bed
+	
+```
+
+
+```{r}
+
+	
+	r354 <- fread("R354_N_enhancer.binary_peaks.bed") %>% unique
+	colnames(r354) <- c("peak","R354N")
+	r371 <- fread("R371_N_enhancer.binary_peaks.bed") %>% unique
+	colnames(r371) <- c("peak","R371N")
+	r380 <- fread("R380_N_enhancer.binary_peaks.bed") %>% unique
+	colnames(r380) <- c("peak","R380N")
+	r400 <- fread("R400_N_enhancer.binary_peaks.bed") %>% unique
+	colnames(r400) <- c("peak","R400N")
+	
+	
+	merge.venn <- merge(merge(merge(r354,r371),r380),r400) %>% select("R354N","R371N","R380N","R400N") %>% vennCounts 
+	#pdf(file=paste("graphs/venn_h3k9me3_peaks.pdf",sep=""), height=8,width=8)
+	pdf(file=paste("graphs/venn_N_enhancer_peaks.pdf",sep=""), height=8,width=8)
+	vennDiagram(merge.venn)
+	dev.off()
+	
+	#select common peaks available in all files and create the final file
+	
+	all_merge <- fread("merge_N_H3K27ac_and_H3K4me1_all_samples_with_id.bed")
+	merge_binary_peaks <- merge(merge(merge(r354,r371),r380),r400) 
+	
+	merge_binary_peaks$rowsum <- rowSums(merge_binary_peaks[,2:5])
+	
+	merge_binary_peaks_filt <- subset(merge_binary_peaks, rowsum >= 3)
+	
+	common_peaks_in_all_files <- merge(all_merge, merge_binary_peaks_filt, by.x="V4", by.y="peak") %>% select(c("V1","V2","V3","V4"))
+	
+	write.table(common_peaks_in_all_files, file="common_N_enhancer_peaks_in_all_patients.bed", quote=F, col.names=F, row.names=F, sep="\t")
+	
+```
+
+	 15080     4
+common peaks
+	
+```{bash}
+##########################################################################
+	##########################################################################
+	##########################################################################
+	####update
+	#we desided to pool everything and not select common peaks
+	
+	cat merge_T_H3K27ac_and_H3K4me1_all_samples_with_id.bed merge_N_H3K27ac_and_H3K4me1_all_samples_with_id.bed | sort -k1,1V -k2,2n | bedtools merge -i stdin | awk -v OFS="\t" '{print $1,$2,$3,"peak_"NR}' > all_pooled_enhancer_peaks_from_N_and_T.bed
+	
+	
+	#all.diff.methylated.min.per.grp.3.cpgs.hg38.txt should be already created by running apromary scripts 
+		#need to select significant cpgs for the hypogeomatric test
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | bedtools intersect -a all_pooled_enhancer_peaks_from_N_and_T.bed -b stdin -wao | awk -v OFS="\t" '{if($7!=-1){print $4,$11,$12}}' > pooled_all_enh_overlapped_with_wgbs_grc38.bed
+
+```
+
+
+###1. define enhancers based on 2 peaks (H3K4me1 and H3K27ac)
+###extend them by 100bp
+###remove 10 kb from gene body
+###create venn with and without removing gene body
+
+
+```{bash}
+##TUMOR
+
+	#extend peak by 100bp from both sides
+	extend_width=100
+	awk -v OFS="\t" -v extend_width="$extend_width" '{print $1, $2-extend_width, $3+extend_width}' R400_T_common_H3K27ac_and_H3K4me1_grc38.bed > R400_T_common_H3K27ac_and_H3K4me1_grc38_extended.bed
+
+	awk -v OFS="\t" -v extend_width="$extend_width" '{print $1, $2-extend_width, $3+extend_width}' R371_T_common_H3K27ac_and_H3K4me1_grc38.bed > R371_T_common_H3K27ac_and_H3K4me1_grc38_extended.bed
+
+	awk -v OFS="\t" -v extend_width="$extend_width" '{print $1, $2-extend_width, $3+extend_width}' R354_T_common_H3K27ac_and_H3K4me1_grc38.bed > R354_T_common_H3K27ac_and_H3K4me1_grc38_extended.bed
+
+	###pool all identified enhancer regions and create main file with all peaks and ids
+	#create the main file with all merged peaks in 4 samples and
+	cat R400_T_common_H3K27ac_and_H3K4me1_grc38_extended.bed R371_T_common_H3K27ac_and_H3K4me1_grc38_extended.bed R354_T_common_H3K27ac_and_H3K4me1_grc38_extended.bed | awk -v OFS="\t" '{print $1,$2,$3}' | sort -k1,1V -k2,2n | bedtools merge -i stdin | awk -v OFS="\t" '{print $1,$2,$3,"peak_T_"NR}' > merge_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.bed
+
+	######create the binary table for venn diagram
+	bedtools intersect -a merge_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.bed -b R400_T_common_H3K27ac_and_H3K4me1_grc38_extended.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R400_T_enhancer.binary_peaks_extended_grc38.bed
+	bedtools intersect -a merge_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.bed -b R371_T_common_H3K27ac_and_H3K4me1_grc38_extended.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R371_T_enhancer.binary_peaks_extended_grc38.bed
+	bedtools intersect -a merge_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.bed -b R354_T_common_H3K27ac_and_H3K4me1_grc38_extended.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R354_T_enhancer.binary_peaks_extended_grc38.bed
+	
+
+```
+
+
+```{r}
+
+	library(data.table)
+	library(dplyr)
+	library(limma)
+
+	r354 <- fread("R354_T_enhancer.binary_peaks_extended_grc38.bed") %>% unique
+	colnames(r354) <- c("peak","R354T")
+	r371 <- fread("R371_T_enhancer.binary_peaks_extended_grc38.bed") %>% unique
+	colnames(r371) <- c("peak","R371T")
+	#r380 <- fread("R380_T_enhancer.binary_peaks.bed") %>% unique
+	#colnames(r380) <- c("peak","R380T")
+	r400 <- fread("R400_T_enhancer.binary_peaks_extended_grc38.bed") %>% unique
+	colnames(r400) <- c("peak","R400T")
+
+
+	merge.venn <- merge(merge(r354,r371),r400) %>% select("R354T","R371T","R400T") %>% vennCounts
+	#pdf(file=paste("graphs/venn_h3k9me3_peaks.pdf",sep=""), height=8,width=8)
+	pdf(file=paste("graphs/venn_T_enhancer_peaks_extended_by100.pdf",sep=""), height=8,width=8)
+	vennDiagram(merge.venn)
+	dev.off()
+
+	#select common peaks available in all files and create the final file
+
+	all_merge <- fread("merge_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.bed")
+	merge_binary_peaks <- merge(merge(r354,r371),r400)
+
+	merge_binary_peaks$rowsum <- rowSums(merge_binary_peaks[,2:4])
+
+	merge_binary_peaks_filt <- subset(merge_binary_peaks, rowsum == 3)
+
+	common_peaks_in_all_files <- merge(all_merge, merge_binary_peaks_filt, by.x="V4", by.y="peak") %>% select(c("V1","V2","V3","V4"))
+
+	write.table(common_peaks_in_all_files, file="common_T_enhancer_peaks_in_all_patients_extended_by_100.bed", quote=F, col.names=F, row.names=F, sep="\t")
+
+
+```
+
+
+```{bash}
+
+
+	#####NORMAL
+	
+
+	#extend peak by 100bp from both sides
+	extend_width=100
+	awk -v OFS="\t" -v extend_width="$extend_width" '{print $1, $2-extend_width, $3+extend_width}' R400_N_common_H3K27ac_and_H3K4me1_grc38.bed > R400_N_common_H3K27ac_and_H3K4me1_grc38_extended.bed
+
+	awk -v OFS="\t" -v extend_width="$extend_width" '{print $1, $2-extend_width, $3+extend_width}' R380_N_common_H3K27ac_and_H3K4me1_grc38.bed > R380_N_common_H3K27ac_and_H3K4me1_grc38_extended.bed
+
+	awk -v OFS="\t" -v extend_width="$extend_width" '{print $1, $2-extend_width, $3+extend_width}' R371_N_common_H3K27ac_and_H3K4me1_grc38.bed > R371_N_common_H3K27ac_and_H3K4me1_grc38_extended.bed
+
+	awk -v OFS="\t" -v extend_width="$extend_width" '{print $1, $2-extend_width, $3+extend_width}' R354_N_common_H3K27ac_and_H3K4me1_grc38.bed > R354_N_common_H3K27ac_and_H3K4me1_grc38_extended.bed
+
+	###pool all identified enhancer regions and create main file with all peaks and ids
+	#create the main file with all merged peaks in 4 samples and
+	cat R400_N_common_H3K27ac_and_H3K4me1_grc38_extended.bed R380_N_common_H3K27ac_and_H3K4me1_grc38_extended.bed R371_N_common_H3K27ac_and_H3K4me1_grc38_extended.bed R354_N_common_H3K27ac_and_H3K4me1_grc38_extended.bed | awk -v OFS="\t" '{print $1,$2,$3}' | sort -k1,1V -k2,2n | bedtools merge -i stdin | awk -v OFS="\t" '{print $1,$2,$3,"peak_N_"NR}' > merge_N_H3K27ac_and_H3K4me1_all_samples_with_id_extended.bed
+
+	######create the binary table for venn diagram
+	bedtools intersect -a merge_N_H3K27ac_and_H3K4me1_all_samples_with_id_extended.bed -b R400_N_common_H3K27ac_and_H3K4me1_grc38_extended.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R400_N_enhancer.binary_peaks_extended_grc38.bed
+	bedtools intersect -a merge_N_H3K27ac_and_H3K4me1_all_samples_with_id_extended.bed -b R380_N_common_H3K27ac_and_H3K4me1_grc38_extended.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R380_N_enhancer.binary_peaks_extended_grc38.bed
+	bedtools intersect -a merge_N_H3K27ac_and_H3K4me1_all_samples_with_id_extended.bed -b R371_N_common_H3K27ac_and_H3K4me1_grc38_extended.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R371_N_enhancer.binary_peaks_extended_grc38.bed
+	bedtools intersect -a merge_N_H3K27ac_and_H3K4me1_all_samples_with_id_extended.bed -b R354_N_common_H3K27ac_and_H3K4me1_grc38_extended.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R354_N_enhancer.binary_peaks_extended_grc38.bed
+
+
+
+```
+
+```{r}
+  library(data.table)
+	library(dplyr)
+	library(limma)
+
+
+	r354 <- fread("R354_N_enhancer.binary_peaks_extended_grc38.bed") %>% unique
+	colnames(r354) <- c("peak","R354N")
+	r371 <- fread("R371_N_enhancer.binary_peaks_extended_grc38.bed") %>% unique
+	colnames(r371) <- c("peak","R371N")
+	r380 <- fread("R380_N_enhancer.binary_peaks_extended_grc38.bed") %>% unique
+	colnames(r380) <- c("peak","R380N")
+	r400 <- fread("R400_N_enhancer.binary_peaks_extended_grc38.bed") %>% unique
+	colnames(r400) <- c("peak","R400N")
+
+
+	merge.venn <- merge(merge(merge(r354,r371),r380),r400) %>% select("R354N","R371N","R380N","R400N") %>% vennCounts
+	#pdf(file=paste("graphs/venn_h3k9me3_peaks.pdf",sep=""), height=8,width=8)
+	pdf(file=paste("graphs/venn_N_enhancer_peaks_extended_by_100.pdf",sep=""), height=8,width=8)
+	vennDiagram(merge.venn)
+	dev.off()
+
+	#select common peaks available in all files and create the final file
+
+	all_merge <- fread("merge_N_H3K27ac_and_H3K4me1_all_samples_with_id_extended.bed")
+	merge_binary_peaks <- merge(merge(merge(r354,r371),r380),r400)
+
+	merge_binary_peaks$rowsum <- rowSums(merge_binary_peaks[,2:5])
+
+	merge_binary_peaks_filt <- subset(merge_binary_peaks, rowsum >= 3)
+
+	common_peaks_in_all_files <- merge(all_merge, merge_binary_peaks_filt, by.x="V4", by.y="peak") %>% select(c("V1","V2","V3","V4"))
+
+	write.table(common_peaks_in_all_files, file="common_N_enhancer_peaks_in_all_patients_extended_by_100.bed", quote=F, col.names=F, row.names=F, sep="\t")
+
+
+```
+
+
+Download gencode GRCh 38 annotation from https://www.gencodegenes.org/human/
+
+```{bash}
+#We used version 28
+
+#create a coordinate file with 10Kb +/- to gene body from both sides
+	############################################################
+	awk '{if($3=="gene"){print $0}}' gencode.v28.annotation.gtf | awk '{if($12=="\"protein_coding\";"){print $0}}'  | awk -v OFS="\t" 'BEGIN{a=0;b=0;c=0} { if($3=="gene") {gname= substr($10, 1, length($10)-2); gname = substr(gname, 2, length(gname)-1); if($4-10000 >0) { print $1="chr"$1,$4-10000,$5+10000,gname,".",$7,$12} }}' | sort -k1,1V -k2,2n | awk '{if($1=="chr1" || $1=="chr2" || $1=="chr2" || $1=="chr3" || $1=="chr4" || $1=="chr5" || $1=="chr6" || $1=="chr7" || $1=="chr8" || $1=="chr9" || $1=="chr10" || $1=="chr11" || $1=="chr12" || $1=="chr13" || $1=="chr14" || $1=="chr15" || $1=="chr16" || $1=="chr17" || $1=="chr18" || $1=="chr19" || $1=="chr20" || $1=="chr21" || $1=="chr22" || $1=="chrX" || $1=="chrY" ) {print $0}}' > extend_10kb_from_both_sides_of_protein_coding_genes_genecode_grc38.bed
+
+	#awk '{if($3=="gene"){print $0}}' gencode.v28.annotation.gtf | awk '{if($12=="\"protein_coding\";"){print $0}}'  | awk -v OFS="\t" 'BEGIN{a=0;b=0;c=0} { if($3=="gene") {gname= substr($10, 1, length($10)-2); gname = substr(gname, 2, length(gname)-1); if($4-50000 >0) { print $1="chr"$1,$4-50000,$5+50000,gname,".",$7,$12} }}' | sort -k1,1V -k2,2n | awk '{if($1=="chr1" || $1=="chr2" || $1=="chr2" || $1=="chr3" || $1=="chr4" || $1=="chr5" || $1=="chr6" || $1=="chr7" || $1=="chr8" || $1=="chr9" || $1=="chr10" || $1=="chr11" || $1=="chr12" || $1=="chr13" || $1=="chr14" || $1=="chr15" || $1=="chr16" || $1=="chr17" || $1=="chr18" || $1=="chr19" || $1=="chr20" || $1=="chr21" || $1=="chr22" || $1=="chrX" || $1=="chrY" ) {print $0}}' > extend_50kb_from_both_sides_of_protein_coding_genes_genecode_grc38.bed
+
+
+	####extend 10 kb from both sides of the gene then remove any enhancer overlap it and generate venn diagrams
+	#########Tumor
+	bedtools subtract -a R400_T_common_H3K27ac_and_H3K4me1_grc38_extended.bed -b extend_10kb_from_both_sides_of_protein_coding_genes_genecode_grc38.bed > R400_T_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed
+
+	bedtools subtract -a R380_T_common_H3K27ac_and_H3K4me1_grc38_extended.bed -b extend_10kb_from_both_sides_of_protein_coding_genes_genecode_grc38.bed > R380_T_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed
+
+	bedtools subtract -a R371_T_common_H3K27ac_and_H3K4me1_grc38_extended.bed -b extend_10kb_from_both_sides_of_protein_coding_genes_genecode_grc38.bed > R371_T_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed
+
+	bedtools subtract -a R354_T_common_H3K27ac_and_H3K4me1_grc38_extended.bed -b extend_10kb_from_both_sides_of_protein_coding_genes_genecode_grc38.bed > R354_T_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed
+
+	###pool all identified enhancer regions and create main file with all peaks and ids
+	#create the main file with all merged peaks in 4 samples and
+
+	cat R400_T_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed R371_T_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed R354_T_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed | awk -v OFS="\t" '{print $1,$2,$3}' | sort -k1,1V -k2,2n | bedtools merge -i stdin | awk -v OFS="\t" '{print $1,$2,$3,"peak_T_"NR}' > merge_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed
+
+
+	####for overlapping counts with pooled enhancers and enhancers derrived from tumor -> final table
+
+	cat R400_T_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed R371_T_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed R354_T_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed | awk -v OFS="\t" '{print $1,$2,$3,"peak_T_cat"NR}' | sort -k1,1V -k2,2n > cat_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed
+
+
+	######create the binary table for venn diagram
+
+
+	bedtools intersect -a merge_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed -b R400_T_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R400_T_enhancer.binary_peaks_extended_grc38_remove_gene_body_and_10kb_extension.bed
+
+	bedtools intersect -a merge_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed -b R371_T_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R371_T_enhancer.binary_peaks_extended_grc38_remove_gene_body_and_10kb_extension.bed
+
+	bedtools intersect -a merge_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed -b R354_T_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R354_T_enhancer.binary_peaks_extended_grc38_remove_gene_body_and_10kb_extension.bed
+
+
+
+```
+
+```{r}
+
+
+	library(data.table)
+	library(dplyr)
+	library(limma)
+
+	r354 <- fread("R354_T_enhancer.binary_peaks_extended_grc38_remove_gene_body_and_10kb_extension.bed") %>% unique
+	colnames(r354) <- c("peak","R354T")
+	r371 <- fread("R371_T_enhancer.binary_peaks_extended_grc38_remove_gene_body_and_10kb_extension.bed") %>% unique
+	colnames(r371) <- c("peak","R371T")
+	#r380 <- fread("R380_T_enhancer.binary_peaks.bed") %>% unique
+	#colnames(r380) <- c("peak","R380T")
+	r400 <- fread("R400_T_enhancer.binary_peaks_extended_grc38_remove_gene_body_and_10kb_extension.bed") %>% unique
+	colnames(r400) <- c("peak","R400T")
+
+
+	merge.venn <- merge(merge(r354,r371),r400) %>% select("R354T","R371T","R400T") %>% vennCounts
+	#pdf(file=paste("graphs/venn_h3k9me3_peaks.pdf",sep=""), height=8,width=8)
+	pdf(file=paste("graphs/venn_T_enhancer_peaks_extended_by100_remove_gene_body_and_10kb_extension.pdf",sep=""), height=8,width=8)
+	vennDiagram(merge.venn)
+	dev.off()
+
+	#select common peaks available in all files and create the final file
+
+	all_merge <- fread("merge_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed")
+	merge_binary_peaks <- merge(merge(r354,r371),r400)
+
+	merge_binary_peaks$rowsum <- rowSums(merge_binary_peaks[,2:4])
+
+	merge_binary_peaks_filt <- subset(merge_binary_peaks, rowsum == 3)
+
+	common_peaks_in_all_files <- merge(all_merge, merge_binary_peaks_filt, by.x="V4", by.y="peak") %>% select(c("V1","V2","V3","V4"))
+
+	write.table(common_peaks_in_all_files, file="common_T_enhancer_peaks_in_all_patients_extended_by_100_remove_gene_body_and_10kb_extension.bed", quote=F, col.names=F, row.names=F, sep="\t")
+
+
+```
+
+```{bash}
+
+  ##############################
+	####NORMAL
+
+##remove 10kb from gene body from all the peaks found from samples
+
+	bedtools subtract -a R400_N_common_H3K27ac_and_H3K4me1_grc38_extended.bed -b extend_10kb_from_both_sides_of_protein_coding_genes_genecode_grc38.bed > R400_N_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed
+
+	bedtools subtract -a R380_N_common_H3K27ac_and_H3K4me1_grc38_extended.bed -b extend_10kb_from_both_sides_of_protein_coding_genes_genecode_grc38.bed > R380_N_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed
+
+	bedtools subtract -a R371_N_common_H3K27ac_and_H3K4me1_grc38_extended.bed -b extend_10kb_from_both_sides_of_protein_coding_genes_genecode_grc38.bed > R371_N_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed
+
+	bedtools subtract -a R354_N_common_H3K27ac_and_H3K4me1_grc38_extended.bed -b extend_10kb_from_both_sides_of_protein_coding_genes_genecode_grc38.bed > R354_N_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed
+
+	###pool all identified enhancer regions and create main file with all peaks and ids
+	#create the main file with all merged peaks in 4 samples and
+
+	cat R400_N_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed R380_N_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed R371_N_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed R354_N_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed | awk -v OFS="\t" '{print $1,$2,$3}' | sort -k1,1V -k2,2n | bedtools merge -i stdin | awk -v OFS="\t" '{print $1,$2,$3,"peak_N_"NR}' > merge_N_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed
+
+	####for overlapping counts with pooled enhancers and enhancers derrived from tumor -> final table
+
+	cat R400_N_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed R380_N_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed R371_N_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed R354_N_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed | awk -v OFS="\t" '{print $1,$2,$3,"peak_N_cat"NR}' | sort -k1,1V -k2,2n > cat_N_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed
+
+
+	######create the binary table for venn diagram
+
+
+	bedtools intersect -a merge_N_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed -b R400_N_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R400_N_enhancer.binary_peaks_extended_grc38_remove_gene_body_and_10kb_extension.bed
+
+	bedtools intersect -a merge_N_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed -b R380_N_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R380_N_enhancer.binary_peaks_extended_grc38_remove_gene_body_and_10kb_extension.bed
+
+	bedtools intersect -a merge_N_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed -b R371_N_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R371_N_enhancer.binary_peaks_extended_grc38_remove_gene_body_and_10kb_extension.bed
+
+	bedtools intersect -a merge_N_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed -b R354_N_common_H3K27ac_and_H3K4me1_grc38_extended_remove_gene_body_and_10kb_extension.bed -wao | awk -v OFS="\t" '{if($6!=-1){print $4,1} else{print $4,0}}' > R354_N_enhancer.binary_peaks_extended_grc38_remove_gene_body_and_10kb_extension.bed
+
+```
+
+
+```{r}
+
+
+	library(data.table)
+	library(dplyr)
+	library(limma)
+
+
+	r354 <- fread("R354_N_enhancer.binary_peaks_extended_grc38_remove_gene_body_and_10kb_extension.bed") %>% unique
+	colnames(r354) <- c("peak","R354N")
+	r371 <- fread("R371_N_enhancer.binary_peaks_extended_grc38_remove_gene_body_and_10kb_extension.bed") %>% unique
+	colnames(r371) <- c("peak","R371N")
+	r380 <- fread("R380_N_enhancer.binary_peaks_extended_grc38_remove_gene_body_and_10kb_extension.bed") %>% unique
+	colnames(r380) <- c("peak","R380N")
+	r400 <- fread("R400_N_enhancer.binary_peaks_extended_grc38_remove_gene_body_and_10kb_extension.bed") %>% unique
+	colnames(r400) <- c("peak","R400N")
+
+
+	merge.venn <- merge(merge(merge(r354,r371),r380),r400) %>% select("R354N","R371N","R380N","R400N") %>% vennCounts
+	#pdf(file=paste("graphs/venn_h3k9me3_peaks.pdf",sep=""), height=8,width=8)
+	pdf(file=paste("graphs/venn_N_enhancer_peaks_extended_by_100_remove_gene_body_and_10kb_extension.pdf",sep=""), height=8,width=8)
+	vennDiagram(merge.venn)
+	dev.off()
+
+	#select common peaks available in all files and create the final file
+
+	all_merge <- fread("merge_N_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed")
+	merge_binary_peaks <- merge(merge(merge(r354,r371),r380),r400)
+
+	merge_binary_peaks$rowsum <- rowSums(merge_binary_peaks[,2:5])
+
+	merge_binary_peaks_filt <- subset(merge_binary_peaks, rowsum >= 3)
+
+	common_peaks_in_all_files <- merge(all_merge, merge_binary_peaks_filt, by.x="V4", by.y="peak") %>% select(c("V1","V2","V3","V4"))
+
+	write.table(common_peaks_in_all_files, file="common_N_enhancer_peaks_in_all_patients_extended_by_100_remove_gene_body_and_10kb_extension.bed", quote=F, col.names=F, row.names=F, sep="\t")
+
+
+```
+
+
+```{bash}
+
+
+	###normalized each region to become 400 bp in total from start to end (from the middle)
+	awk -v OFS="\t" '{middle=int(($3-$2)/2); print $1,($2+middle),($2+middle),$4 }' cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed | awk -v OFS="\t" '{ print $1,$2-200+1,$2+200,$4}' > cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension_normalized.bed
+
+#only 1kb and 10kb will be used in the manuscript
+	###normalized to become 1000 bp 
+	awk -v OFS="\t" '{middle=int(($3-$2)/2); print $1,($2+middle),($2+middle),$4 }' cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed | awk -v OFS="\t" '{ print $1,$2-500+1,$2+500,$4}' > cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension_normalized_1kb.bed
+#chr     start     end     enhancerID	
+#chr1    777526  778525  peakNT1
+#chr1    779301  780300  peakNT2
+#chr1    816605  817604  peakNT3
+#chr1    825839  826838  peakNT4
+#chr1    828173  829172  peakNT5
+
+	###normalized to become 2000 bp
+#	awk -v OFS="\t" '{middle=int(($3-$2)/2); print $1,($2+middle),($2+middle),$4 }' cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed | awk -v OFS="\t" '{ print $1,$2-1000+1,$2+1000,$4}' > cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension_normalized_2kb.bed
+
+	###normalized to become 10kp
+	awk -v OFS="\t" '{middle=int(($3-$2)/2); print $1,($2+middle),($2+middle),$4 }' cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed | awk -v OFS="\t" '{ print $1,$2-5000+1,$2+5000,$4}' > cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension_normalized_10kb.bed
+
+
+	#### tumor
+	awk -v OFS="\t" '{middle=int(($3-$2)/2); print $1,($2+middle),($2+middle),$4 }' merge_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed | awk -v OFS="\t" '{ print $1,$2-200+1,$2+200,$4}' > merge_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension_normalized.bed
+
+	#normal
+	awk -v OFS="\t" '{middle=int(($3-$2)/2); print $1,($2+middle),($2+middle),$4 }' merge_N_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed | awk -v OFS="\t" '{ print $1,$2-200+1,$2+200,$4}' > merge_N_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension_normalized.bed
+
+	##cancer paper enh
+	
+	#You should have already created enhancers from 
+	#http://cancerdiscovery.aacrjournals.org/content/7/11/1284.long supplemenatry tables
+	#and they should be converted to GRCh38
+
+	awk -v OFS="\t" '{middle=int(($3-$2)/2); print $1,($2+middle),($2+middle),$4,$5 }' enhancers_from_cancer_discovery_paper.grc38.bed | awk -v OFS="\t" '{ print $1,$2-200+1,$2+200,$4,$5}' > enhancers_from_cancer_discovery_paper.grc38_normalized.bed
+
+```
+
+
+```{bash}
+
+
+	#####next we used wgbs to define N, T and NT enhancers
+	
+	#now we need to find regions that are gained in tumor (T), lost in tumor (N) and no change(B)
+
+	#module load gcc/5.4.0 bedtools/2.26.0
+
+	
+	#1  kb enhancer overlap
+		#need to select significant cpgs for the hypogeometric test
+		#then overlap with enhancers 
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <=0.05){print $0}}' | bedtools intersect -a cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension_normalized_1kb.bed -b stdin -wao | awk -v OFS="\t" '{if($7!=-1){print $4,$11,$12}}' > pooled_all_enh_overlapped_with_wgbs_grc38_extended_normalized.bed
+
+#	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <=0.05){print $0}}' | bedtools intersect -a cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension_normalized_2kb.bed -b stdin -wao | awk -v OFS="\t" '{if($7!=-1){print $4,$11,$12}}' > pooled_all_enh_overlapped_with_wgbs_grc38_extended_normalized_2kb.bed
+
+#10 kb enhancer overlap
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <=0.05){print $0}}' | bedtools intersect -a cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension_normalized_10kb.bed -b stdin -wao | awk -v OFS="\t" '{if($7!=-1){print $4,$11,$12}}' > pooled_all_enh_overlapped_with_wgbs_grc38_extended_normalized_10kb.bed
+
+	#####do not remove non-significant cpgs it needs for getting total cpgs
+	
+	#1kb
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <= 1){print $0}}' | bedtools intersect -a cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension_normalized_1kb.bed -b stdin -wao | awk -v OFS="\t" '{if($7!=-1){print $4,$11,$12}}' > pooled_all_enh_overlapped_with_wgbs_grc38_extended_normalized_not_cpg_filtered_by_fdr.bed
+
+#10kb
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <= 1){print $0}}' | bedtools intersect -a cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension_normalized_10kb.bed -b stdin -wao | awk -v OFS="\t" '{if($7!=-1){print $4,$11,$12}}' > pooled_all_enh_overlapped_with_wgbs_grc38_extended_10kb_normalized_not_cpg_filtered_by_fdr.bed
+
+
+```
+####download GRCh37 annotation file from genecode
+
+```{bash}
+`
+#create one bp gene annotation file 
+#columns 
+#chr | start = end | gene ID | . | strand 
+
+	awk '{if($3=="gene"){print $0}}' gencode.grc37.annotation.chr.gtf | awk '{if($12=="\"protein_coding\";"){print $0}}' | awk -v OFS="\t" 'BEGIN{a=0;b=0;c=0} { if($3=="gene") {gname= substr($10, 1, length($10)-2); gname = substr(gname, 2, length(gname)-1); if($7=="+") {a=$4; b=a; c=a; print $1,b,c,gname,".",$7} else if($7=="-"){a=$5; b=a; c=a; print $1,b,c,gname,".",$7 }}}' | awk -v OFS="\t" '{split($4,a,/_/);$4=a[1]}1' | awk -v OFS="\t" '{split($4,a,/\./);$4=a[1]}1' | sort -k1,1 -k2,2n > TSS.gencode.onebp.position.for.finding.nearest.cpgs.grc37.bed
+
+
+#add "chr" as a prefix to chromosome number
+#create the file 
+#gencode.v28.annotation.chr.gtf
+
+	awk '{if($3=="gene"){print $0}}' gencode.v28.annotation.chr.gtf |  awk '{if($12=="\"protein_coding\";"){print $0}}' | awk -v OFS="\t" 'BEGIN{a=0;b=0;c=0} { if($3=="gene") {gname= substr($10, 1, length($10)-2); gname = substr(gname, 2, length(gname)-1); if($7=="+") {a=$4; b=a; c=a; print $1,b,c,gname,".",$7} else if($7=="-"){a=$5; b=a; c=a; print $1,b,c,gname,".",$7 }}}' | awk -v OFS="\t" '{split($4,a,/_/);$4=a[1]}1' | awk -v OFS="\t" '{split($4,a,/\./);$4=a[1]}1' | sort -k1,1 -k2,2n > TSS.gencode.onebp.position.for.finding.nearest.cpgs.grc38.bed
+
+
+	#####find the closest gene for each enhancer
+	awk -v OFS="\t" '{middle=int(($3-$2)/2); print $1,($2+middle),($2+middle),$4 }' cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed | sort -k1,1 -k2,2n | closestBed -D b -t first -a stdin -b TSS.gencode.onebp.position.for.finding.nearest.cpgs.grc38.bed | awk '{if($7!=-1){print $0}}' > closest_gene_to_N_and_T_enh_extended_normalized_grc38.bed
+
+	#find the closest enhancers to each gene
+	awk -v OFS="\t" '{middle=int(($3-$2)/2); print $1,($2+middle),($2+middle),$4 }' cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed | sort -k1,1 -k2,2n | closestBed -D b -t first -b stdin -a TSS.gencode.onebp.position.for.finding.nearest.cpgs.grc38.bed | awk '{if($8!=-1){print $0}}' > closest_N_and_T_enh_to_gene_extended_normalized_grc38.bed
+
+	######find closest gene to the enhancer and overlap with wgbs of their promoter 2kb, 5kb and 10kb regions
+	#in addition do the same with 5kb dowstream region
+
+	awk -v OFS="\t" '{middle=int(($3-$2)/2); print $1,($2+middle),($2+middle),$4 }' cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed | sort -k1,1 -k2,2n | closestBed -D b -t first -a stdin -b TSS.gencode.onebp.position.for.finding.nearest.cpgs.grc38.bed | awk '{if($7!=-1){print $0}}' | awk -v OFS="\t" '{print $5,$6,$7,$8,$9,$10,$4}' | awk -v OFS="\t" '{if($6=="+"){print $1,$2-2000+1,$2,$4,$5,$6,$7} else{print $1,$2,$2+2000-1,$4,$5,$6,$7}}' > closest_gene_promoter_2kb_to_enhancers_grc38.bed
+
+	awk -v OFS="\t" '{middle=int(($3-$2)/2); print $1,($2+middle),($2+middle),$4 }' cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed | sort -k1,1 -k2,2n | closestBed -D b -t first -a stdin -b TSS.gencode.onebp.position.for.finding.nearest.cpgs.grc38.bed | awk '{if($7!=-1){print $0}}' | awk -v OFS="\t" '{print $5,$6,$7,$8,$9,$10,$4}' | awk -v OFS="\t" '{if($6=="+"){print $1,$2-10000+1,$2,$4,$5,$6,$7} else{print $1,$2,$2+10000-1,$4,$5,$6,$7}}' > closest_gene_promoter_10kb_to_enhancers_grc38.bed
+
+	#5kb promoter
+	awk -v OFS="\t" '{middle=int(($3-$2)/2); print $1,($2+middle),($2+middle),$4 }' cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed | sort -k1,1 -k2,2n | closestBed -D b -t first -a stdin -b TSS.gencode.onebp.position.for.finding.nearest.cpgs.grc38.bed | awk '{if($7!=-1){print $0}}' | awk -v OFS="\t" '{print $5,$6,$7,$8,$9,$10,$4}' | awk -v OFS="\t" '{if($6=="+"){print $1,$2-5000+1,$2,$4,$5,$6,$7} else{print $1,$2,$2+5000-1,$4,$5,$6,$7}}' > closest_gene_promoter_5kb_to_enhancers_grc38.bed
+
+	#5kb down stream region
+	awk -v OFS="\t" '{middle=int(($3-$2)/2); print $1,($2+middle),($2+middle),$4 }' cat_N_and_T_H3K27ac_and_H3K4me1_all_samples_with_id_extended.grc38_remove_gene_body_and_10kb_extension.bed | sort -k1,1 -k2,2n | closestBed -D b -t first -a stdin -b TSS.gencode.onebp.position.for.finding.nearest.cpgs.grc38.bed | awk '{if($7!=-1){print $0}}' | awk -v OFS="\t" '{print $5,$6,$7,$8,$9,$10,$4}' | awk -v OFS="\t" '{if($6=="+"){print $1,$2,$2-1+5000,$4,$5,$6,$7} else{print $1,$2-5000+1,$2,$4,$5,$6,$7}}' > closest_gene_downstream_5kb_to_enhancers_grc38.bed
+
+
+
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <=0.05){print $0}}' | bedtools intersect -a closest_gene_promoter_2kb_to_enhancers_grc38.bed -b stdin -wao | awk '{if($10!=-1){print $0}}' > closest_gene_promoters_2kb_to_all_enh_overlapped_with_wgbs_grc38.bed
+
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <=0.05){print $0}}' | bedtools intersect -a closest_gene_promoter_10kb_to_enhancers_grc38.bed -b stdin -wao | awk '{if($10!=-1){print $0}}' > closest_gene_promoters_10kb_to_all_enh_overlapped_with_wgbs_grc38.bed
+
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <=0.1){print $0}}' | bedtools intersect -a closest_gene_promoter_10kb_to_enhancers_grc38.bed -b stdin -wao | awk '{if($10!=-1){print $0}}' > closest_gene_promoters_10kb_FDR_0.1_to_all_enh_overlapped_with_wgbs_grc38.bed
+
+	##5kb promoter
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <=0.05){print $0}}' | bedtools intersect -a closest_gene_promoter_5kb_to_enhancers_grc38.bed -b stdin -wao | awk '{if($10!=-1){print $0}}' > closest_gene_promoters_5kb_to_all_enh_overlapped_with_wgbs_grc38.bed
+
+	#5kb down stream
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <=0.05){print $0}}' | bedtools intersect -a closest_gene_downstream_5kb_to_enhancers_grc38.bed -b stdin -wao | awk '{if($10!=-1){print $0}}' > closest_gene_dowstream_5kb_to_all_enh_overlapped_with_wgbs_grc38.bed
+
+
+	###not filtering by the fdr wgbs
+	
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <= 1){print $0}}' | bedtools intersect -a closest_gene_promoter_2kb_to_enhancers_grc38.bed -b stdin -wao | awk -v OFS="\t" '{if($10!=-1){print $7,$14,$15}}' > closest_gene_promoters_2kb_to_all_enh_overlapped_with_wgbs_grc38_not_cpg_filtered_by_fdr.bed
+
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <= 1){print $0}}' | bedtools intersect -a closest_gene_promoter_10kb_to_enhancers_grc38.bed -b stdin -wao | awk -v OFS="\t" '{if($10!=-1){print $7,$14,$15}}' > closest_gene_promoters_10kb_to_all_enh_overlapped_with_wgbs_grc38_not_cpg_filtered_by_fdr.bed
+
+	#5kb
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <= 1){print $0}}' | bedtools intersect -a closest_gene_promoter_5kb_to_enhancers_grc38.bed -b stdin -wao | awk -v OFS="\t" '{if($10!=-1){print $7,$14,$15}}' > closest_gene_promoters_5kb_to_all_enh_overlapped_with_wgbs_grc38_not_cpg_filtered_by_fdr.bed
+
+	#5kb downstream
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <= 1){print $0}}' | bedtools intersect -a closest_gene_downstream_5kb_to_enhancers_grc38.bed -b stdin -wao | awk -v OFS="\t" '{if($10!=-1){print $7,$14,$15}}' > closest_gene_downstream_5kb_to_all_enh_overlapped_with_wgbs_grc38_not_cpg_filtered_by_fdr.bed
+
+
+	####all the gene promoters 10kb closest with enhancers overlap with wgbs cpgs
+
+	awk -v OFS="\t" '{print $1,$2,$3,$4,$5,$6,$10,$11}' closest_N_and_T_enh_to_gene_extended_normalized_grc38.bed | awk -v OFS="\t" '{if($6=="+"){print $1,$2-10000+1,$2,$4,$5,$6,$7,$8} else{print $1,$2,$2+10000-1,$4,$5,$6,$7,$8}}' | awk -v OFS="\t" '{if($1!="chrM"){print $0}}' > gene_promoter_10kb_grc38.bed
+
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <=0.05){print $0}}' | bedtools intersect -a gene_promoter_10kb_grc38.bed -b stdin -wao | awk '{if($10!=-1){print $0}}' > closest_gene_promoters_10kb_to_enh_all_overlapped_with_wgbs_FDR_0.05_grc38.bed
+
+	#5kb promoter
+	awk -v OFS="\t" '{print $1,$2,$3,$4,$5,$6,$10,$11}' closest_N_and_T_enh_to_gene_extended_normalized_grc38.bed | awk -v OFS="\t" '{if($6=="+"){print $1,$2-5000+1,$2,$4,$5,$6,$7,$8} else{print $1,$2,$2+5000-1,$4,$5,$6,$7,$8}}' | awk -v OFS="\t" '{if($1!="chrM"){print $0}}' > gene_promoter_5kb_grc38.bed
+
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <=0.05){print $0}}' | bedtools intersect -a gene_promoter_5kb_grc38.bed -b stdin -wao | awk '{if($10!=-1){print $0}}' > closest_gene_promoters_5kb_to_enh_all_overlapped_with_wgbs_FDR_0.05_grc38.bed
+
+	#5kb downstream
+	#if($6=="+"){print $1,$2,$2-1+5000,$4,$5,$6,$7} else{print $1,$2-5000+1,$2,$4,$5,$6,$7}}
+	awk -v OFS="\t" '{print $1,$2,$3,$4,$5,$6,$10,$11}' closest_N_and_T_enh_to_gene_extended_normalized_grc38.bed | awk -v OFS="\t" '{if($6=="+"){print $1,$2,$2-1+5000+1,$4,$5,$6,$7,$8} else{print $1,$2-5000+1,$2,$4,$5,$6,$7,$8}}' | awk -v OFS="\t" '{if($1!="chrM"){print $0}}' > gene_downstream_5kb_grc38.bed
+
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <=0.05){print $0}}' | bedtools intersect -a gene_downstream_5kb_grc38.bed -b stdin -wao | awk '{if($10!=-1){print $0}}' > closest_gene_downstream_5kb_to_enh_all_overlapped_with_wgbs_FDR_0.05_grc38.bed
+
+	####all the gene promoters 10kb overlap with wgbs cpgs which have beta values grc38
+
+
+
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' /home/pubudu/projects/rrg-hsn/pubudu/cagekid/methylationarray/wgbs/methykit.input/methylkit.grc38/all.methylated.beta.values.for.overlap.min.per.grp.3.cpgs.grc38.txt | awk -v OFS="\t" '{if($1!="lambda" && $1!="pUC19"){print $0}}' | bedtools intersect -a gene_promoter_10kb_grc38.bed -b stdin -wao | awk '{if($10!=-1){print $0}}' > closest_gene_promoters_10kb_overlapped_with_wgbs_beta_grc38.bed
+
+	#grc37 to grc38
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' /home/pubudu/projects/rrg-hsn/pubudu/cagekid/methylationarray/wgbs/methykit.input/all.methylated.beta.values.for.overlap.min.per.grp.3.cpgs.grc38.indirect.txt | awk -v OFS="\t" '{if($1!="lambda" && $1!="pUC19"){print $0}}' | bedtools intersect -a gene_promoter_10kb_grc38.bed -b stdin -wao | awk '{if($10!=-1){print $0}}' > closest_gene_promoters_10kb_overlapped_with_wgbs_beta_grc38.bed
+
+
+
+	#####all genes opverlap with promoter 10kb and wgbs cpgs
+	#$1,$2-5000+1,$2,$4,$5,$6,$7,$8} else{print $1,$2,$2+5000-1,
+	awk -v OFS="\t" '{if($6=="+"){print $1,$2-10000+1,$2,$4,$5,$6} else{print $1,$2,$2+10000-1,$4,$5,$6}}' TSS.gencode.onebp.position.for.finding.nearest.cpgs.grc38.bed | awk -v OFS="\t" '{if($1!="chrM" && $1!="pUC19"){print $0}}' > TSS.gencode.10kb.promoter.for.overlap.with.cpgs.grc38.bed
+
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <=0.05){print $0}}' | bedtools intersect -a TSS.gencode.10kb.promoter.for.overlap.with.cpgs.grc38.bed -b stdin -wao | awk '{if($8!=-1){print $0}}' > overlap_gene_promoters_10kb_wgbs_FDR_0.05_grc38.bed
+
+	#not filtering by wgbs fdr. for all cps
+
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <= 1){print $0}}' | bedtools intersect -a TSS.gencode.10kb.promoter.for.overlap.with.cpgs.grc38.bed -b stdin -wao | awk -v OFS="\t" '{if($8!=-1){print $4,$13,$14}}' > overlap_gene_promoters_10kb_wgbs_without_FDR_filtering_all_cpg_grc38.bed
+
+	#5kb
+	awk -v OFS="\t" '{if($6=="+"){print $1,$2-5000+1,$2,$4,$5,$6} else{print $1,$2,$2+5000-1,$4,$5,$6}}' TSS.gencode.onebp.position.for.finding.nearest.cpgs.grc38.bed | awk -v OFS="\t" '{if($1!="chrM" && $1!="pUC19"){print $0}}' > TSS.gencode.5kb.promoter.for.overlap.with.cpgs.grc38.bed
+
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <=0.05){print $0}}' | bedtools intersect -a TSS.gencode.5kb.promoter.for.overlap.with.cpgs.grc38.bed -b stdin -wao | awk '{if($8!=-1){print $0}}' > overlap_gene_promoters_5kb_wgbs_FDR_0.05_grc38.bed
+
+	#not filtering by wgbs fdr. for all cps
+
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <= 1){print $0}}' | bedtools intersect -a TSS.gencode.5kb.promoter.for.overlap.with.cpgs.grc38.bed -b stdin -wao | awk -v OFS="\t" '{if($8!=-1){print $4,$13,$14}}' > overlap_gene_promoters_5kb_wgbs_without_FDR_filtering_all_cpg_grc38.bed
+
+	#5kb down stream
+	#($6=="+"){print $1,$2,$2-1+5000+1,$4,$5,$6,$7,$8} else{print $1,$2-5000+1,$2,$4,
+	awk -v OFS="\t" '{if($6=="+"){print $1,$2,$2+5000-1,$4,$5,$6} else{print $1,$2-5000+1,$2,$4,$5,$6}}' TSS.gencode.onebp.position.for.finding.nearest.cpgs.grc38.bed | awk -v OFS="\t" '{if($1!="chrM" && $1!="pUC19"){print $0}}' > TSS.gencode.5kb.downstream.for.overlap.with.cpgs.grc38.bed
+
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <=0.05){print $0}}' | bedtools intersect -a TSS.gencode.5kb.downstream.for.overlap.with.cpgs.grc38.bed -b stdin -wao | awk '{if($8!=-1){print $0}}' > overlap_gene_downstream_5kb_wgbs_FDR_0.05_grc38.bed
+
+	#not filtering by wgbs fdr. for all cps
+
+	awk -v OFS="\t" '{if(NR!=1){print $0}}' all.diff.methylated.min.per.grp.3.cpgs.hg38.txt | awk -v OFS="\t" '{if($7 <= 1){print $0}}' | bedtools intersect -a TSS.gencode.5kb.downstream.for.overlap.with.cpgs.grc38.bed -b stdin -wao | awk -v OFS="\t" '{if($8!=-1){print $4,$13,$14}}' > overlap_gene_downstream_5kb_wgbs_without_FDR_filtering_all_cpg_grc38.bed
+
+
+
+
+```
+
+####solving the liftover spliting problem
+#####combine regions with same id after lift over
+```{r}
+
+
+
+	library(data.table)
+	library(dplyr)
+	enhgrc38 <- fread("enhancers_from_cancer_discovery_paper.grc38.bed")
+
+
+	#add width
+	enhgrc38$width <- enhgrc38$V3-enhgrc38$V2
+
+	enh_df <- group_by(enhgrc38, V4) %>% summarise(tot_width=sum(width))
+
+	enh_df_temp <- merge(enhgrc38, enh_df, by="V4")
+
+	#order by start position
+	enh_df_temp <- enh_df_temp[order(enh_df_temp$V2),]
+
+	enh_df_temp <- enh_df_temp[!duplicated(enh_df_temp$V4)]
+
+	#enh-1058815" "enh-1058818" "enh-1058822" are removed from yao et el enhancers when liftover to grc38
+
+	enh_df_temp$V3 <- enh_df_temp$V2+ enh_df_temp$tot_width
+
+	enh_df_temp <- select(enh_df_temp, c(1:5))
+
+	enh_df_temp <- enh_df_temp[,c(2:4,1,5)]
+
+	write.table(enh_df_temp, file="enhancers_from_cancer_discovery_paper.grc38_liftovercorrect.bed", col.names = F, row.names = F, quote = F, sep = "\t")
+
+```
+

@@ -1,0 +1,65 @@
+#!/bin/bash
+#PBS -l nodes=1:ppn=16,pmem=6gb
+#PBS -l walltime=08:00:00
+#PBS -A czx-944-aa
+#PBS -o /gs/project/czx-944-aa/pubudu/cagekid/rnaseq/raw/R400_N_1_Kidney_RNASeq_out.txt
+#PBS -e /gs/project/czx-944-aa/pubudu/cagekid/rnaseq/raw/R400_N_1_Kidney_RNASeq_err.txt
+#PBS -N R400_N_1_RNASeq
+#PBS -V
+###PBS -t 1-4
+
+table="table_rnaseq4pat.txt"
+rawfName=`cat $table | head -n $PBS_ARRAYID | tail -n 1 | cut -f1`
+fName=`cat $table | head -n $PBS_ARRAYID | tail -n 1 | cut -f2`
+
+################################################
+##### Define directories and tool locations ####
+################################################
+projectDir=''
+RNAseqDIR=''
+#download gene annotation file from encode
+geneAnnotation='Homo_sapiens.GRCh38.85.chr.gtf'
+##############current directory#################
+pwd
+ls -l
+
+##Redirect in to the local scratch directory
+cd $LSCRATCH
+pwd
+ls -l
+mkdir temp
+cd temp
+echo "moved to temp directory"
+pwd
+ls -l
+
+
+################################################
+#####Map to the GRC38 reference human genome####
+echo "mapping to the genome started"
+#hisat2 -f -x ${projectDir}utilities/indexes/HISAT2/GRCh38/genome -U ${fName}.fq -S ${fName}.sam
+ls -l
+#####map two fastq files#######################
+
+hisat2 -q -p 16 -x ${projectDir}utilities/indexes/HISAT2/GRCh38/genome -1 ${RNAseqDIR}raw/HI.1165.008.Index_6.R400_N1_Kidney_RNASeq_1_R1.fastq.gz -2 ${RNAseqDIR}raw/HI.1165.008.Index_6.R400_N1_Kidney_RNASeq_1_R2.fastq.gz -S ${fName}_paired.sam
+ls -l
+
+###############################################
+#######Convert sam file to BAM#################
+##samtools view -bS R380_T_1_Kidney_RNASeq_2_out.sam > ${RNAseqDIR}raw/R380_T_1_Kidney_RNASeq_2_out.bam
+
+###ls -l
+###############################################
+#######count reads with hisat-count############
+echo " starting counting reads"
+mkdir ${RNAseqDIR}output/${fName}
+
+samtools sort -n ${fName}_paired.sam -o ${fName}_paired_sorted.sam
+ls -l
+
+
+python -m HTSeq.scripts.count -a 30 -m intersection-strict -s reverse ${fName}_paired_sorted.sam ${geneAnnotation} > ${RNAseqDIR}RNA-seq_counts_4patients/${fName}_count_int_strict.txt
+
+
+
+
